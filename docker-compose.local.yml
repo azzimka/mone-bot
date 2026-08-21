@@ -1,0 +1,21 @@
+# Только PostgreSQL для локальной разработки
+# Бот запускается отдельно в venv
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cashcontrol
+      POSTGRES_PASSWORD: localpassword
+      POSTGRES_DB: cashcontrol
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cashcontrol"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata_local:
