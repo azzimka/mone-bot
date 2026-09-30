@@ -59,6 +59,27 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
         f"📂 Категория: {tx_dict.get('category', 'Другое')}\n"
         f"📝 Описание: {tx_dict.get('description', '-')}"
     )
+
+    # For expenses: show remaining balance
+    if tx_dict["type"] == "expense":
+        from sqlalchemy import select, func
+        from bot.models.transaction import Transaction as TxModel
+
+        stmt_income = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
+            TxModel.user_id == user_id, TxModel.type == "income"
+        )
+        stmt_expense = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
+            TxModel.user_id == user_id, TxModel.type == "expense"
+        )
+        income_total = (await session.execute(stmt_income)).scalar() or 0
+        expense_total = (await session.execute(stmt_expense)).scalar() or 0
+        balance = float(income_total) - float(expense_total)
+
+        # Only show balance if user has set it up (income > 0)
+        if float(income_total) > 0:
+            balance_str = f"{balance:,.0f}".replace(",", " ")
+            success_text += f"\n\n💵 Остаток: *{balance_str} {currency}*"
+
     await callback.message.edit_text(success_text, parse_mode="Markdown")
 
     # Clean up

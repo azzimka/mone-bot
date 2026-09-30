@@ -21,8 +21,8 @@ class AIParser:
     def __init__(self, api_key: str):
         """Initialize the AIParser with Groq client."""
         self.client = Groq(api_key=api_key)
-        # Using the currently available model on Groq
-        self.model = "openai/gpt-oss-20b"
+        # Using Qwen 3.8 27B model for superior multi-language (Russian & Uzbek) comprehension
+        self.model = "qwen/qwen3.8-27b"
         
     async def parse(self, text: str, default_currency: str = 'UZS') -> Optional[ParsedTransactions]:
         """

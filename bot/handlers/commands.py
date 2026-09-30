@@ -32,6 +32,10 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="📋 Расходы за сегодня"),
             ],
             [
+                KeyboardButton(text="💰 Баланс"),
+                KeyboardButton(text="📅 Расходы за месяц"),
+            ],
+            [
                 KeyboardButton(text="🚌 Автобус / Метро — 2 000 сум"),
             ],
         ],
@@ -155,12 +159,19 @@ async def cmd_today(message: Message, session: AsyncSession):
         )
         return
 
+    from datetime import timezone, timedelta
+    uzb_tz = timezone(timedelta(hours=5))
+    
     lines = [f"📋 *Расходы за {today.strftime('%d.%m.%Y')}*\n"]
     for tx in transactions:
         icon = CATEGORY_ICON_MAP.get(tx.category or "Другое", "❓")
         amount_str = fmt(float(tx.amount), tx.currency)
         desc = tx.description or tx.category or "—"
-        lines.append(f"{icon} {desc} — *{amount_str}*")
+        
+        # Format time to UTC+5 (Uzbekistan)
+        time_str = tx.created_at.astimezone(uzb_tz).strftime("%H:%M")
+        
+        lines.append(f"`{time_str}` {icon} {desc} — *{amount_str}*")
 
     lines.append(f"\n💸 *Итого: {fmt(total, user.default_currency)}*")
 
@@ -299,4 +310,86 @@ async def callback_reset_confirm(callback, session: AsyncSession):
 async def callback_reset_cancel(callback):
     """Cancel the reset operation."""
     await callback.message.edit_text("✅ Отменено. Данные не удалены.")
+    await callback.answer()
+
+MONTH_NAMES = [
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+]
+
+@router.message(F.text == "📅 Расходы за месяц")
+@router.message(Command("month"))
+async def cmd_month_menu(message: Message):
+    """Show inline keyboard with months of the current year."""
+    today = date.today()
+    year = today.year
+    
+    keyboard = []
+    row = []
+    
+    # Show all 12 months sequentially in a compact 3x4 grid
+    for m in range(1, 13):
+        month_name = MONTH_NAMES[m-1]
+        btn_text = f"{m:02d} | {month_name}"
+        btn = InlineKeyboardButton(text=btn_text, callback_data=f"month_report:{year}-{m:02d}")
+        row.append(btn)
+        
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+            
+    if row:
+        keyboard.append(row)
+
+    await message.answer(
+        f"📅 *Отчет за {year} год*\nВыберите месяц:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+import calendar
+
+@router.callback_query(F.data.startswith("month_report:"))
+async def process_month_report(callback, session: AsyncSession):
+    """Show detailed report for the selected month."""
+    _, year_month = callback.data.split(":")
+    year, month = map(int, year_month.split("-"))
+
+    user = await UserRepository.get_or_create(
+        session, callback.from_user.id,
+        callback.from_user.username, callback.from_user.first_name
+    )
+
+    last_day = calendar.monthrange(year, month)[1]
+    start_date = date(year, month, 1)
+    end_date = date(year, month, last_day)
+
+    summary = await TransactionRepository.get_summary_by_category(
+        session, user.id, start_date, end_date, "expense"
+    )
+    
+    name_display = f"{MONTH_NAMES[month-1]} {year}"
+
+    if not summary:
+        await callback.message.edit_text(
+            f"📅 *Расходы за {name_display}*\n\nВ этом месяце расходов нет.",
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+
+    lines = [f"📅 *Расходы за {name_display}*\n"]
+    total = 0
+    for cat, amount in summary:
+        total += float(amount)
+        icon = CATEGORY_ICON_MAP.get(cat or "Другое", "❓")
+        cat_name = cat or "Другое"
+        lines.append(f"{icon} {cat_name} — *{fmt(float(amount), user.default_currency)}*")
+
+    lines.append(f"\n💸 *Итого за месяц: {fmt(total, user.default_currency)}*")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        parse_mode="Markdown"
+    )
     await callback.answer()

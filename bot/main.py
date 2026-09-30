@@ -3,12 +3,13 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import TelegramObject, BotCommand
 from aiogram import BaseMiddleware
+from aiogram.fsm.storage.memory import MemoryStorage
 from typing import Callable, Dict, Any, Awaitable
 
 from bot.config import settings
 from bot.database.engine import async_session_maker, init_db
 from bot.database.repositories import CategoryRepository
-from bot.handlers import commands, voice, text, callbacks
+from bot.handlers import commands, voice, text, callbacks, balance
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +37,15 @@ class DbSessionMiddleware(BaseMiddleware):
 
 
 async def set_bot_commands(bot: Bot):
-    """Register bot commands for the Telegram menu."""
-    await bot.set_my_commands([
-        BotCommand(command="start", description="🏠 Главное меню"),
-        BotCommand(command="today", description="📋 Расходы за сегодня"),
-        BotCommand(command="week",  description="📊 Расходы за неделю"),
-        BotCommand(command="help",  description="❓ Помощь"),
-    ])
-    logger.info("Bot commands set.")
+    """Set bot commands menu."""
+    commands = [
+        BotCommand(command="start", description="Запустить/перезапустить бота"),
+        BotCommand(command="today", description="Расходы за сегодня"),
+        BotCommand(command="week", description="Расходы за неделю"),
+        BotCommand(command="month", description="Расходы за месяц"),
+        BotCommand(command="reset", description="Удалить все данные (сброс)"),
+    ]
+    await bot.set_my_commands(commands)
 
 
 async def on_startup(bot: Bot):
@@ -67,13 +69,14 @@ async def main():
     )
 
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
 
     # Register Middlewares
     dp.update.middleware(DbSessionMiddleware(async_session_maker))
 
-    # Include routers (order matters!)
+    # Include routers — balance must come before text to avoid FSM state conflicts
     dp.include_router(commands.router)
+    dp.include_router(balance.router)
     dp.include_router(voice.router)
     dp.include_router(text.router)
     dp.include_router(callbacks.router)

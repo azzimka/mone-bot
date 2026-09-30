@@ -73,7 +73,7 @@
 | Язык | Python 3.12 |
 | Фреймворк | aiogram 3 |
 | Распознавание речи | Groq Whisper (`whisper-large-v3-turbo`) |
-| Понимание текста | Groq LLM (`openai/gpt-oss-20b`) |
+| Понимание текста | Groq LLM (`qwen/qwen3.8-27b`) |
 | База данных | PostgreSQL 16 |
 | ORM | SQLAlchemy 2 (async) |
 | Деплой | Docker Compose / DigitalOcean |
