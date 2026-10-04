@@ -27,6 +27,7 @@ DEFAULT_CATEGORIES: list[tuple[str, str]] = [
     ("📈", "Инвестиции"),
     ("🎯", "Фриланс"),
     ("💸", "Переводы"),
+    ("⚖️", "Сверка"),
 ]
 
 # Emoji map for category icons in reports

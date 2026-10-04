@@ -80,7 +80,8 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
 
             # Create inline keyboard
             builder = InlineKeyboardBuilder()
-            builder.button(text="✅ Верно", callback_data=f"confirm:{tx_id}")
+            btn_text = "⚖️ Приравнять" if tx.type == "reconcile" else "✅ Верно"
+            builder.button(text=btn_text, callback_data=f"confirm:{tx_id}")
             builder.button(text="❌ Отменить", callback_data=f"cancel:{tx_id}")
             builder.adjust(2)
 

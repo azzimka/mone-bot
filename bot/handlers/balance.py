@@ -1,11 +1,12 @@
-"""Balance feature handler — balance overview, top-up history, and manual top-up."""
-
+import os
+import tempfile
 import logging
 import uuid
 from datetime import date, timezone, timedelta
 from decimal import Decimal
+from typing import Optional
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -17,11 +18,17 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.config import settings
+from bot.services.speech import SpeechService
+from bot.services.ai_parser import AIParser
 from bot.database.repositories import TransactionRepository, UserRepository
 from bot.handlers.commands import fmt, get_main_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+speech_service = SpeechService(api_key=settings.GROQ_API_KEY)
+ai_parser = AIParser(api_key=settings.GROQ_API_KEY)
 
 UZB_TZ = timezone(timedelta(hours=5))
 
@@ -31,6 +38,32 @@ class TopUpStates(StatesGroup):
     """Finite-state machine for the manual top-up flow."""
     waiting_for_amount = State()
     waiting_for_description = State()
+
+
+class ReconcileStates(StatesGroup):
+    """Finite-state machine for balance reconciliation."""
+    waiting_for_amount = State()
+
+
+def parse_balance_expression(text: str) -> Optional[int]:
+    """
+    Parses a direct number or a mathematical sum expression like:
+    '50000', '50 000', '50к', '20000+15000+15000', '25k + 25k', '20 минг + 30 минг'
+    """
+    cleaned = text.lower().replace(" ", "").replace(",", "").replace("_", "")
+    cleaned = cleaned.replace("тысяч", "000").replace("тыс", "000")
+    cleaned = cleaned.replace("минг", "000").replace("ming", "000")
+    cleaned = cleaned.replace("к", "000").replace("k", "000")
+    cleaned = cleaned.replace("сум", "").replace("uzs", "").replace("som", "").replace("so'm", "")
+
+    parts = cleaned.split("+")
+    total = 0
+    for p in parts:
+        p = p.strip()
+        if not p.isdigit():
+            return None
+        total += int(p)
+    return total
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -76,8 +109,11 @@ def _balance_keyboard() -> InlineKeyboardMarkup:
     """Inline keyboard shown on the balance screen."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📋 История", callback_data="balance:history:0"),
+            InlineKeyboardButton(text="⚖️ Сверить", callback_data="balance:reconcile"),
             InlineKeyboardButton(text="➕ Пополнить", callback_data="balance:topup"),
+        ],
+        [
+            InlineKeyboardButton(text="📋 История", callback_data="balance:history:0"),
         ],
     ])
 
@@ -348,3 +384,167 @@ async def cb_balance_back(callback: CallbackQuery, session: AsyncSession):
         reply_markup=_balance_keyboard(),
     )
     await callback.answer()
+
+
+# ─── Reconciliation flow (FSM) ──────────────────────────────────────────────
+
+@router.callback_query(F.data == "balance:reconcile")
+async def cb_start_reconcile(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """Start balance reconciliation flow."""
+    user = await UserRepository.get_or_create(
+        session, callback.from_user.id,
+        callback.from_user.username, callback.from_user.first_name,
+    )
+    data = await _get_balance_data(session, user.id)
+    curr_str = fmt(float(data["balance"]), user.default_currency)
+
+    await state.set_state(ReconcileStates.waiting_for_amount)
+    await callback.message.answer(
+        f"⚖️ *Сверка баланса*\n\n"
+        f"В боте сейчас: *{curr_str}*\n\n"
+        "Сколько у тебя сейчас денег суммарно на всех картах и в кармане?\n"
+        "Введи число или напиши сумму через плюс:\n"
+        "_Например:_ `50000` или `25000 + 15000 + 10000`\n\n"
+        "_(также можешь отправить голосовое сообщение)_",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data="balance:reconcile_cancel"),
+        ]]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "balance:reconcile_cancel")
+async def cb_reconcile_cancel(callback: CallbackQuery, state: FSMContext):
+    """Cancel reconciliation."""
+    await state.clear()
+    await callback.message.edit_text("❌ Сверка баланса отменена.")
+    await callback.answer()
+
+
+@router.message(StateFilter(ReconcileStates.waiting_for_amount), F.text)
+async def fsm_reconcile_amount(message: Message, state: FSMContext, session: AsyncSession):
+    """Handle text input for target balance."""
+    raw = message.text.strip()
+    target = parse_balance_expression(raw)
+
+    if target is None:
+        parsed = await ai_parser.parse(raw, "UZS")
+        if parsed and parsed.transactions:
+            target = int(parsed.transactions[0].amount)
+
+    if target is None or target < 0:
+        await message.answer(
+            "⚠️ Не удалось распознать сумму.\n\n"
+            "Введи число (например `50000`) или сложение (`20000 + 30000`), либо нажми «Отмена»:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="❌ Отмена", callback_data="balance:reconcile_cancel"),
+            ]]),
+        )
+        return
+
+    await _apply_reconciliation(message, session, state, target)
+
+
+@router.message(StateFilter(ReconcileStates.waiting_for_amount), F.voice)
+async def fsm_reconcile_voice(message: Message, state: FSMContext, session: AsyncSession, bot: Bot):
+    """Handle voice input during reconciliation."""
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    voice = message.voice
+    file_info = await bot.get_file(voice.file_id)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as temp_file:
+        temp_path = temp_file.name
+
+    try:
+        await bot.download_file(file_info.file_path, temp_path)
+        transcribed_text = await speech_service.transcribe(temp_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    if not transcribed_text or transcribed_text.startswith("К сожалению"):
+        await message.reply("⚠️ Не удалось разобрать голос. Попробуйте написать текстом.")
+        return
+
+    await message.reply(f"🎤 *Распознано:* _{transcribed_text}_", parse_mode="Markdown")
+
+    target = parse_balance_expression(transcribed_text)
+    if target is None:
+        parsed = await ai_parser.parse(transcribed_text, "UZS")
+        if parsed and parsed.transactions:
+            target = int(parsed.transactions[0].amount)
+
+    if target is None or target < 0:
+        await message.answer(
+            "⚠️ Не удалось определить сумму из голоса. Попробуйте сказать, например: «50 тысяч» или напишите число текстом."
+        )
+        return
+
+    await _apply_reconciliation(message, session, state, target)
+
+
+async def _apply_reconciliation(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    target_amount: int,
+) -> None:
+    """Internal: apply balance reconciliation, save diff transaction, and show result."""
+    user = await UserRepository.get_or_create(
+        session, message.chat.id, None, None
+    )
+
+    data = await _get_balance_data(session, user.id)
+    curr_balance = data["balance"]
+    target_decimal = Decimal(str(target_amount))
+    diff = target_decimal - curr_balance
+    currency = user.default_currency
+
+    if diff > 0:
+        diff_fmt = f"{float(diff):,.0f}".replace(",", " ")
+        await TransactionRepository.create(
+            session=session,
+            user_id=user.id,
+            type="income",
+            amount=diff,
+            currency=currency,
+            category="Сверка",
+            description=f"Сверка (+{diff_fmt} {currency})",
+            date=date.today(),
+        )
+        diff_str = f"+{diff_fmt} {currency} (доход)"
+    elif diff < 0:
+        abs_diff = abs(diff)
+        abs_diff_fmt = f"{float(abs_diff):,.0f}".replace(",", " ")
+        await TransactionRepository.create(
+            session=session,
+            user_id=user.id,
+            type="expense",
+            amount=abs_diff,
+            currency=currency,
+            category="Сверка",
+            description=f"Сверка (-{abs_diff_fmt} {currency})",
+            date=date.today(),
+        )
+        diff_str = f"-{abs_diff_fmt} {currency} (расход)"
+    else:
+        diff_str = f"0 {currency} (без изменений)"
+
+    await state.clear()
+
+    new_data = await _get_balance_data(session, user.id)
+    curr_fmt = f"{float(curr_balance):,.0f}".replace(",", " ")
+    target_fmt = f"{float(target_decimal):,.0f}".replace(",", " ")
+
+    status_icon = "🟢" if target_decimal > 0 else "🔴"
+
+    await message.answer(
+        f"⚖️ *Баланс успешно сверен!*\n\n"
+        f"├ Было в боте:  `{curr_fmt} {currency}`\n"
+        f"├ Разница:      *{diff_str}*\n"
+        f"└ Стало:        *{target_fmt} {currency}* {status_icon}\n\n"
+        + _format_balance_message(new_data, currency),
+        parse_mode="Markdown",
+        reply_markup=_balance_keyboard(),
+    )

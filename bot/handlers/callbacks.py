@@ -32,6 +32,73 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
     tx_dict = pending_data["transaction"]
     voice_text = pending_data.get("voice_text", "")
 
+    # Special handling for balance reconciliation
+    if tx_dict["type"] == "reconcile":
+        from decimal import Decimal
+        from sqlalchemy import select, func
+        from bot.models.transaction import Transaction as TxModel
+
+        target_amount = Decimal(str(tx_dict["amount"]))
+        currency = tx_dict.get("currency", "UZS")
+
+        stmt_income = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
+            TxModel.user_id == user_id, TxModel.type == "income"
+        )
+        stmt_expense = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
+            TxModel.user_id == user_id, TxModel.type == "expense"
+        )
+        income_total = (await session.execute(stmt_income)).scalar() or Decimal("0")
+        expense_total = (await session.execute(stmt_expense)).scalar() or Decimal("0")
+        current_balance = Decimal(str(income_total)) - Decimal(str(expense_total))
+
+        diff = target_amount - current_balance
+
+        if diff > 0:
+            diff_fmt = f"{float(diff):,.0f}".replace(",", " ")
+            await TransactionRepository.create(
+                session=session,
+                user_id=user_id,
+                type="income",
+                amount=diff,
+                currency=currency,
+                category="Сверка",
+                description=f"Сверка (+{diff_fmt} {currency})",
+                voice_text=voice_text,
+                date=date.today(),
+            )
+            diff_str = f"+{diff_fmt} {currency} (доход)"
+        elif diff < 0:
+            abs_diff = abs(diff)
+            abs_diff_fmt = f"{float(abs_diff):,.0f}".replace(",", " ")
+            await TransactionRepository.create(
+                session=session,
+                user_id=user_id,
+                type="expense",
+                amount=abs_diff,
+                currency=currency,
+                category="Сверка",
+                description=f"Сверка (-{abs_diff_fmt} {currency})",
+                voice_text=voice_text,
+                date=date.today(),
+            )
+            diff_str = f"-{abs_diff_fmt} {currency} (расход)"
+        else:
+            diff_str = "0 UZS (совпадает)"
+
+        curr_fmt = f"{float(current_balance):,.0f}".replace(",", " ")
+        target_fmt = f"{float(target_amount):,.0f}".replace(",", " ")
+
+        success_text = (
+            f"⚖️ *Баланс синхронизирован!*\n\n"
+            f"├ Было в боте:  `{curr_fmt} {currency}`\n"
+            f"├ Корректировка: `{diff_str}`\n"
+            f"└ Фактический:   *{target_fmt} {currency}* 🟢"
+        )
+        await callback.message.edit_text(success_text, parse_mode="Markdown")
+        del pending_transactions[tx_id]
+        await callback.answer("⚖️ Баланс сверен!")
+        return
+
     # Save to database
     await TransactionRepository.create(
         session=session,

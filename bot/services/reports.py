@@ -62,6 +62,15 @@ class ReportService:
         if voice_text:
             report += f"🗣 _«{voice_text}»_\n\n"
             
+        if parsed.type == "reconcile":
+            amount_str = self.format_amount(parsed.amount, parsed.currency)
+            report += f"⚖️ *Сверка баланса*\n\n"
+            report += f"🎯 Фактический остаток: *{amount_str}*\n"
+            if parsed.description:
+                report += f"📝 Описание: {parsed.description}\n\n"
+            report += "Приравнять баланс в боте к этой сумме?"
+            return report
+
         emoji = "📥" if parsed.type == "income" else "📤"
         type_str = "Доход" if parsed.type == "income" else "Расход"
         amount_str = self.format_amount(parsed.amount, parsed.currency)
