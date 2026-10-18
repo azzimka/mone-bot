@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -26,9 +26,6 @@ import {
   CircleHelp,
   Download,
   Edit3,
-  GraduationCap,
-  Heart,
-  Home,
   LayoutDashboard,
   ListFilter,
   LogOut,
@@ -40,7 +37,6 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  Utensils,
   Wallet,
   X,
 } from "lucide-react";
@@ -58,6 +54,11 @@ import {
   Summary,
   summarize,
 } from "../lib/api";
+
+import { CategoryIcon } from "../components/category-icon";
+import { EntryModal } from "../components/entry-sheet";
+import { Modal } from "../components/dialog";
+import { MobileTransactions } from "../components/mobile-transactions";
 
 type View = "dashboard" | "transactions" | "analytics" | "settings";
 const titles: Record<View, string> = {
@@ -88,22 +89,6 @@ const chartColors = [
   "#a1b1c4",
   "#d1d8df",
 ];
-
-function CategoryIcon({ name, size = 18 }: { name: string; size?: number }) {
-  const Icon =
-    name === "Еда" || name === "Кафе"
-      ? Utensils
-      : name === "Зарплата" || name === "Фриланс"
-        ? Wallet
-        : name === "Здоровье"
-          ? Heart
-          : name === "Образование"
-            ? GraduationCap
-            : name === "Жильё"
-              ? Home
-              : ShoppingBag;
-  return <Icon size={size} strokeWidth={1.7} />;
-}
 
 export default function Page() {
   const [view, setView] = useState<View>("dashboard");
@@ -334,6 +319,11 @@ export default function Page() {
     });
   }, [summary, month, end]);
 
+  const openEditor = (entry: Entry | "new") => {
+    setError("");
+    setEditor(entry);
+  };
+
   const saveEntry = async (data: EntryInput) => {
     setSaving(true);
     setError("");
@@ -365,6 +355,10 @@ export default function Page() {
         );
       setEditor(null);
       setPage(0);
+      setMonth(data.date.slice(0, 7));
+      setSearch("");
+      setSearchTerm("");
+      setKind("");
       refresh();
       setNotice(
         user
@@ -607,7 +601,9 @@ export default function Page() {
               {user ? "Telegram ulangan" : "Namuna rejimi"}
             </span>
             <span className="topbar-divider" />
-            <span className="language" aria-label="Interfeys tili: o‘zbekcha">UZ</span>
+            <span className="language" aria-label="Interfeys tili: o‘zbekcha">
+              UZ
+            </span>
             <span className="avatar small">
               {user?.first_name.slice(0, 1) ?? "M"}
             </span>
@@ -631,7 +627,10 @@ export default function Page() {
                       : "Shaxsiy kabinetingiz va Telegram bilan ulanish."}
               </p>
             </div>
-            <button className="button primary" onClick={() => setEditor("new")}>
+            <button
+              className="button primary"
+              onClick={() => openEditor("new")}
+            >
               <Plus size={18} />
               Yangi operatsiya
             </button>
@@ -1069,6 +1068,10 @@ export default function Page() {
                       </label>
                     </div>
                   )}
+                  <MobileTransactions
+                    items={items.slice(0, view === "dashboard" ? 5 : 20)}
+                    onEdit={openEditor}
+                  />
                   <div className="table-scroll">
                     <table>
                       <thead>
@@ -1126,7 +1129,7 @@ export default function Page() {
                                   <button
                                     className="icon-button"
                                     aria-label={`${tx.description || tx.category} operatsiyasini tahrirlash`}
-                                    onClick={() => setEditor(tx)}
+                                    onClick={() => openEditor(tx)}
                                   >
                                     <Edit3 size={15} />
                                   </button>
@@ -1154,7 +1157,7 @@ export default function Page() {
                       </p>
                       <button
                         className="button secondary compact"
-                        onClick={() => setEditor("new")}
+                        onClick={() => openEditor("new")}
                       >
                         <Plus size={15} />
                         Operatsiya qo‘shish
@@ -1315,6 +1318,14 @@ export default function Page() {
         </main>
       </div>
 
+      <button
+        type="button"
+        className="mobile-add-entry"
+        onClick={() => openEditor("new")}
+      >
+        <Plus size={21} />
+        Kirim yoki chiqim qo‘shish
+      </button>
       {notice && (
         <div className="toast" role="status">
           <span className="toast-check">
@@ -1342,6 +1353,10 @@ export default function Page() {
             if (!saving) setEditor(null);
           }}
           onSave={saveEntry}
+          onDelete={(entry) => {
+            setEditor(null);
+            setDeleting(entry);
+          }}
         />
       )}
       {deleting && (
@@ -1401,187 +1416,5 @@ export default function Page() {
         </Modal>
       )}
     </div>
-  );
-}
-
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const node = dialog.current;
-    node?.showModal();
-    return () => node?.close();
-  }, []);
-  return (
-    <dialog
-      ref={dialog}
-      className="modal"
-      onCancel={(e) => {
-        e.preventDefault();
-        onClose();
-      }}
-      onClick={(e) => {
-        if (e.target === dialog.current) onClose();
-      }}
-    >
-      <div className="modal-content">
-        <div className="modal-header">
-          <h2>{title}</h2>
-          <button
-            className="icon-button"
-            onClick={onClose}
-            aria-label="Oynani yopish"
-          >
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </dialog>
-  );
-}
-
-function EntryModal({
-  entry,
-  categories: options,
-  currency,
-  demo,
-  saving,
-  error,
-  onClose,
-  onSave,
-}: {
-  entry: Entry | "new";
-  categories: string[];
-  currency: string;
-  demo: boolean;
-  saving: boolean;
-  error: string;
-  onClose: () => void;
-  onSave: (data: EntryInput) => Promise<void>;
-}) {
-  const [type, setType] = useState<Entry["type"]>(
-    entry === "new" ? "expense" : entry.type,
-  );
-  const [amount, setAmount] = useState(entry === "new" ? "" : entry.amount);
-  const [date, setDate] = useState(
-    entry === "new" ? (demo ? "2026-10-18" : localDay()) : entry.date,
-  );
-  const [category, setCategory] = useState(
-    entry === "new" ? "Еда" : entry.category,
-  );
-  const [description, setDescription] = useState(
-    entry === "new" ? "" : entry.description,
-  );
-  const allOptions = [...new Set([...options, category])];
-  return (
-    <Modal
-      title={entry === "new" ? "Yangi operatsiya" : "Operatsiyani tahrirlash"}
-      onClose={onClose}
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSave({ type, amount, date, category, description });
-        }}
-      >
-        {demo && (
-          <div className="form-demo">
-            Namuna rejimi: haqiqiy hisobingiz o‘zgarmaydi.
-          </div>
-        )}
-        <div className="type-toggle">
-          <button
-            type="button"
-            className={type === "expense" ? "selected" : ""}
-            onClick={() => setType("expense")}
-          >
-            <ArrowUpRight size={16} />
-            Chiqim
-          </button>
-          <button
-            type="button"
-            className={type === "income" ? "selected" : ""}
-            onClick={() => setType("income")}
-          >
-            <ArrowDownLeft size={16} />
-            Kirim
-          </button>
-        </div>
-        <label className="form-field">
-          Summa ({currency})
-          <input
-            autoFocus
-            required
-            type="number"
-            min="0.01"
-            max="9999999999999.99"
-            step="0.01"
-            placeholder="0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-        </label>
-        <div className="form-row">
-          <label className="form-field">
-            Sana
-            <input
-              required
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </label>
-          <label className="form-field">
-            Kategoriya
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            >
-              {allOptions.map((value) => (
-                <option key={value} value={value}>
-                  {categoryLabel(value)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label className="form-field">
-          Tavsif
-          <input
-            maxLength={2000}
-            placeholder="Masalan, tushlik yoki oylik maosh"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </label>
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="modal-actions">
-          <button
-            type="button"
-            className="button secondary"
-            onClick={onClose}
-            disabled={saving}
-          >
-            Bekor qilish
-          </button>
-          <button className="button primary" disabled={saving}>
-            <Check size={17} />
-            {saving ? "Saqlanmoqda…" : "Saqlash"}
-          </button>
-        </div>
-      </form>
-    </Modal>
   );
 }
