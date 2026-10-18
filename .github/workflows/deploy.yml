@@ -75,6 +75,9 @@ jobs:
             echo "🐳 Rebuilding and restarting bot and web containers..."
             sudo docker compose -f docker-compose.yml -f docker-compose.web.yml up -d --build
 
+            echo "Validating web configuration without exposing credentials..."
+            sudo docker compose -f docker-compose.yml -f docker-compose.web.yml run --rm -T --no-deps web python -m api.deployment_check
+
             echo "Checking database-backed API health..."
             for attempt in $(seq 1 30); do
               if sudo docker compose -f docker-compose.yml -f docker-compose.web.yml exec -T web python -c 'from urllib.request import urlopen; assert urlopen("http://127.0.0.1:8000/api/health", timeout=5).status == 200'; then
