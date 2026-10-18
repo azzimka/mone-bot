@@ -49,6 +49,6 @@ Ro‘yxatdagi amallar aniq ajratildi, bosish joylari kamida 44 px. Kategoriya oy
 
 ## Holat
 
-Preview: https://mone-web-theta.vercel.app/?view=settings
+2026-10-19: eski Vercel preview loyihasi o‘chirildi. Quyidagi holat oldingi tekshiruvga tegishli. Joriy hosting holati: [Oracle hosting](HOSTING_UZ.md).
 
 Public preview namuna rejimida. Doimiy saqlash va autentifikatsiya lokal test API/bazasida tekshirildi. Asosiy backend va botga yangi kod hali deploy qilinmagan. O‘zgarishlar `mirzo`da, commit/push yoki `main`ga merge bu so‘rov doirasida bajarilmadi.

@@ -6,6 +6,7 @@ import "./globals.css";
 import "./entry.css";
 import "./language.css";
 import "./mobile-focus.css";
+import "./finance.css";
 
 export const metadata: Metadata = {
   applicationName: "Mone",

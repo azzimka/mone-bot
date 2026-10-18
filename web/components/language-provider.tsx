@@ -102,7 +102,7 @@ function useLanguageState() {
       money: (amount: number | string) => formatMoney(language, amount),
       categoryLabel: (name: string) => {
         const item=catalog.find(item=>item.name===name);
-        return item?.display_name ?? (language === "ru" ? name : uzbekCategoryLabel(name));
+        return (language==="ru"?item?.name_ru:item?.name_uz) ?? item?.display_name ?? (language === "ru" ? name : uzbekCategoryLabel(name));
       },
       descriptionLabel: (entry: Entry) => entryDescription(language, entry),
     }),

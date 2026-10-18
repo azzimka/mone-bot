@@ -27,6 +27,7 @@ class Transaction(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
+    account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
     type: Mapped[str] = mapped_column(String(10), nullable=False)  # 'income' or 'expense'
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(10), default="UZS", nullable=False)

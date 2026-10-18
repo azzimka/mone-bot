@@ -10,6 +10,17 @@ jobs:
   test:
     name: Backend and frontend checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mone_test
+          POSTGRES_PASSWORD: test_only_password
+          POSTGRES_DB: mone_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mone_test -d mone_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,6 +35,8 @@ jobs:
 
       - name: Backend tests
         run: python -m unittest discover -s tests -v
+        env:
+          CSV_TEST_POSTGRES_URL: postgresql+asyncpg://mone_test:test_only_password@localhost:5432/mone_test
 
       - uses: actions/setup-node@v4
         with:
@@ -87,6 +100,19 @@ jobs:
               if [ "$attempt" -eq 30 ]; then exit 1; fi
               sleep 2
             done
-            test -n "$(sudo docker compose ps -q bot)"
+            echo "Checking frontend, manifest and public icons..."
+            sudo docker compose -f docker-compose.yml -f docker-compose.web.yml exec -T web python -c 'from urllib.request import urlopen; paths=("/", "/manifest.webmanifest", "/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png", "/favicon.ico"); assert all(urlopen("http://127.0.0.1:8000"+path, timeout=5).status == 200 for path in paths); print("Frontend and all public app icons returned HTTP 200.")'
+            echo "Checking bot startup..."
+            for attempt in $(seq 1 30); do
+              bot_id="$(sudo docker compose ps -q bot)"
+              if [ -n "$bot_id" ] && [ "$(sudo docker inspect --format '{{.State.Running}}' "$bot_id")" = "true" ] && sudo docker compose logs --no-color --tail 100 bot 2>&1 | grep -q 'Startup complete\.'; then
+                break
+              fi
+              if [ "$attempt" -eq 30 ]; then
+                echo "Bot did not complete startup. Configuration values are not printed."
+                exit 1
+              fi
+              sleep 2
+            done
             echo "✅ Deployment completed successfully!"
             sudo docker compose ps

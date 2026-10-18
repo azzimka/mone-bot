@@ -1,5 +1,6 @@
 export type Entry = {
   id: number;
+  account_id?: number | null;
   date: string;
   type: "income" | "expense";
   amount: string;
@@ -16,6 +17,9 @@ export type Profile = {
   first_name: string;
   username: string | null;
   currency: string;
+  timezone?: string;
+  week_start?: number;
+  quick_categories?: string[];
 };
 export type Summary = {
   balance: string;
@@ -31,7 +35,7 @@ export type Summary = {
 export type EntryInput = Pick<
   Entry,
   "date" | "type" | "amount" | "category" | "description"
->;
+> & {account_id?: number};
 
 export const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -120,9 +124,9 @@ export const money = (amount: number | string) =>
   new Intl.NumberFormat("uz-UZ", { maximumFractionDigits: 2 }).format(
     Number(amount),
   );
-export const localDay = () =>
+export const localDay = (timeZone = "Asia/Tashkent") =>
   new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Tashkent",
+    timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import Base
@@ -34,6 +34,9 @@ class User(Base):
         default="UZS",
         nullable=False,
     )
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Tashkent")
+    week_start: Mapped[int] = mapped_column(Integer, default=0)
+    quick_categories: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

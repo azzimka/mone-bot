@@ -40,9 +40,8 @@ class LanguageMiddleware(BaseMiddleware):
         token = current_language.set(user.language or "uz")
         category_token = current_category_names.set(None)
         try:
-            custom = (await session.execute(select(Category.name, Category.display_name).where(
-                Category.user_id == user.id, Category.display_name.is_not(None)))).all()
-            current_category_names.set(dict(custom))
+            custom = (await session.execute(select(Category).where(Category.user_id==user.id))).scalars().all()
+            current_category_names.set({item.name:(item.name_ru if user.language=='ru' else item.name_uz) or item.display_name for item in custom if (item.name_ru if user.language=='ru' else item.name_uz) or item.display_name})
             data["mone_user"] = user
             is_choice = isinstance(event, CallbackQuery) and bool(re.fullmatch(r"language:(uz|ru)(?::[a-f0-9]{32})?", event.data or ""))
             if user.language is None and not is_choice:

@@ -2,7 +2,7 @@
 
 Sana: 2026-10-18. Ishchi branch: `mirzo`.
 
-Tekshiruv havolasi: https://mone-web-theta.vercel.app
+2026-10-19 yangilanishi: eski Vercel frontend loyihasi foydalanuvchi so‘roviga binoan o‘chirildi. Quyidagi hisobot 2026-10-18 tekshiruvlarini qayd etadi; eski preview endi ishlamaydi. Joriy hosting holati: [Oracle hosting](HOSTING_UZ.md).
 
 Bu havolada statik frontend va namuna ma’lumotlari bor. Yangi backend funksiyalari alohida lokal test bazasida tekshirildi. Asosiy bot/API serveriga ushbu ish davomida deploy qilinmadi. O‘zgarishlar hali commit/push qilinmagan va `main`ga kiritilmagan.
 

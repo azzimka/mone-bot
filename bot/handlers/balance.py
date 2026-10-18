@@ -1,3 +1,4 @@
+from bot.services.finance import local_today, balance_adjustment
 from bot.services.i18n import tr, button_variants
 import os
 import tempfile
@@ -78,17 +79,21 @@ async def _get_balance_data(session: AsyncSession, user_id: int) -> dict:
     from datetime import date as date_type
     from sqlalchemy import select, func
     from bot.models.transaction import Transaction
+    from bot.models import User
+    owner=await session.get(User,user_id)
 
     stmt_income = select(
         func.coalesce(func.sum(Transaction.amount), 0)
     ).where(
         Transaction.user_id == user_id,
+        Transaction.currency == owner.default_currency,
         Transaction.type == "income",
     )
     stmt_expense = select(
         func.coalesce(func.sum(Transaction.amount), 0)
     ).where(
         Transaction.user_id == user_id,
+        Transaction.currency == owner.default_currency,
         Transaction.type == "expense",
     )
 
@@ -97,7 +102,9 @@ async def _get_balance_data(session: AsyncSession, user_id: int) -> dict:
 
     total_income = Decimal(str(income_result.scalar() or 0))
     total_expenses = Decimal(str(expense_result.scalar() or 0))
-    balance = total_income - total_expenses
+    from bot.models import User
+    owner=await session.get(User,user_id)
+    balance = total_income - total_expenses + await balance_adjustment(session,user_id,owner.default_currency)
 
     return {
         "total_income": total_income,
@@ -342,7 +349,7 @@ async def _save_topup(
         currency=user.default_currency,
         category="Пополнение",
         description=description,
-        date=date.today(),
+        date=local_today(user),
     )
 
     await state.clear()
@@ -496,7 +503,7 @@ async def _apply_reconciliation(
             currency=currency,
             category="Сверка",
             description=f"Сверка (+{diff_fmt} {currency})",
-            date=date.today(),
+            date=local_today(user),
         )
         diff_str = tr('+{p1} {p3} (доход)' ,p1=f'{diff_fmt}', p3=f'{currency}')
     elif diff < 0:
@@ -510,7 +517,7 @@ async def _apply_reconciliation(
             currency=currency,
             category="Сверка",
             description=f"Сверка (-{abs_diff_fmt} {currency})",
-            date=date.today(),
+            date=local_today(user),
         )
         diff_str = tr('-{p1} {p3} (расход)' ,p1=f'{abs_diff_fmt}', p3=f'{currency}')
     else:

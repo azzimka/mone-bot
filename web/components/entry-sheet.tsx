@@ -39,7 +39,10 @@ export function EntryModal({
   entry,
   newType = "expense",
   categories,
-  currency,
+  currency:initialCurrency,
+  accounts=[],
+  quickCategories=[],
+  timeZone,
   demo,
   saving,
   error,
@@ -51,6 +54,9 @@ export function EntryModal({
   newType?: Entry["type"];
   categories: string[];
   currency: string;
+  accounts?: import("./finance-tools").MoneyAccount[];
+  quickCategories?: string[];
+  timeZone?: string;
   demo: boolean;
   saving: boolean;
   error: string;
@@ -61,7 +67,9 @@ export function EntryModal({
   const { t, categoryLabel, descriptionLabel } = useLanguage();
   const {catalog}=useCategories();
   const availablePriority=(kind:Entry["type"])=>priority[kind].filter(name=>categories.includes(name));
-  const today = demo ? "2026-10-18" : localDay();
+  const [walletId,setWalletId]=useState<number|undefined>(entry!=="new"?entry.account_id??accounts.find(item=>item.currency===entry.currency)?.id:accounts.find(item=>item.currency===initialCurrency)?.id);
+  const currency=accounts.find(item=>item.id===walletId)?.currency??initialCurrency;
+  const today = demo ? "2026-10-18" : localDay(timeZone);
   const initialType = entry === "new" ? newType : entry.type;
   const [type, setType] = useState<Entry["type"]>(initialType);
   const [amount, setAmount] = useState(
@@ -91,7 +99,7 @@ export function EntryModal({
   const id = useId();
   const validated = validateEntryAmount(amount);
   const order = [...new Set([...availablePriority(type), ...categories, category])];
-  const suggestions = [...new Set([category,...availablePriority(type),...categories])].slice(0,6);
+  const suggestions = [...new Set([category,...quickCategories.filter(name=>categories.includes(name)),...availablePriority(type),...categories])].slice(0,6);
   const shown = expanded
     ? order.filter((name) =>
         `${categoryLabel(name)} ${name} ${categoryLabel(catalog.find(item=>item.name===name)?.parent_name??"")}`
@@ -208,6 +216,7 @@ export function EntryModal({
           try {
             await onSave({
               type,
+              ...(walletId?{account_id:walletId}:{}),
               amount: validated.value,
               date,
               category,
@@ -241,6 +250,7 @@ export function EntryModal({
           )}
           <fieldset className="entry-fields" disabled={saving}>
             <legend className="sr-only">{t("Operatsiya ma’lumotlari")}</legend>
+            {!demo&&accounts.length>0&&<label className="entry-account"><span>{t("Hisob")}</span><select value={walletId??""} onChange={event=>setWalletId(Number(event.target.value))}>{accounts.filter(item=>entry==="new"||item.currency===entry.currency).map(item=><option key={item.id} value={item.id}>{item.name} · {item.currency}</option>)}</select></label>}
             <div
               className="entry-type"
               role="group"

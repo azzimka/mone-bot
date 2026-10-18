@@ -1,5 +1,6 @@
 """Same-origin web API and static Next.js export, backed by the bot's ledger."""
 
+import json
 import logging
 import re
 import secrets
@@ -68,7 +69,7 @@ async def get_user(request: Request, session: AsyncSession = Depends(get_session
 
 
 def serialize_tx(tx: Transaction) -> dict:
-    return {"id": tx.id, "type": tx.type, "amount": str(tx.amount), "currency": tx.currency,
+    return {"id": tx.id, "account_id":tx.account_id,"type": tx.type, "amount": str(tx.amount), "currency": tx.currency,
             "category": tx.category or "Другое", "description": tx.description or "",
             "date": tx.date.isoformat()}
 
@@ -76,6 +77,8 @@ def serialize_tx(tx: Transaction) -> dict:
 def user_json(user: User, bot_username: str = "") -> dict:
     return {"first_name": user.first_name or "Mone foydalanuvchisi", "username": user.username,
             "currency": user.default_currency, "language": user.language,
+            "timezone": user.timezone or "Asia/Tashkent", "week_start": user.week_start or 0,
+            "quick_categories": json.loads(user.quick_categories or "[]"),
             "language_url": f"https://t.me/{bot_username.lstrip('@')}?start=language" if bot_username else None,
             "bot_url": f"https://t.me/{bot_username.lstrip('@')}" if bot_username else None}
 
@@ -89,8 +92,18 @@ def period(start: date | None, end: date | None) -> tuple[date, date]:
     return start, end
 
 
-def ledger_filter(user: User):
-    return (Transaction.user_id == user.id, Transaction.currency == user.default_currency)
+def ledger_filter(user: User, currency: str | None = None):
+    return (Transaction.user_id == user.id, Transaction.currency == (currency or user.default_currency))
+
+async def report_scope(session, user, currency, account_id):
+    from bot.models import Account
+    if account_id is not None:
+        item=(await session.execute(select(Account).where(Account.user_id==user.id,Account.id==account_id))).scalar_one_or_none()
+        if item is None:raise HTTPException(404,"Hisob topilmadi.")
+        currency=item.currency
+    currency=currency or user.default_currency
+    return [*ledger_filter(user,currency),*([Transaction.account_id==account_id] if account_id else [])],currency
+
 
 
 def create_app(config: WebSettings | None = None, pool: async_sessionmaker | None = None) -> FastAPI:
@@ -219,7 +232,13 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
                           session: AsyncSession = Depends(get_session)):
         if user.language is None:
             raise HTTPException(409, "Avval botda tilni tanlang")
-        user.language = body.language
+        from bot.services.categories import category_catalog
+        values=body.model_dump(exclude_none=True)
+        if "quick_categories" in values:
+            available={item["name"] for item in await category_catalog(session,user.id) if not item["archived"]}
+            if len(set(values["quick_categories"]))!=len(values["quick_categories"]) or not set(values["quick_categories"]).issubset(available):raise HTTPException(422,"Tezkor kategoriyalarni tekshiring.")
+        for key,value in values.items():
+            setattr(user,"default_currency" if key=="currency" else key,json.dumps(value) if key=="quick_categories" else value)
         await session.commit()
         return user_json(user, config.TELEGRAM_BOT_USERNAME)
 
@@ -248,9 +267,11 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
         catalog = await category_catalog(session, user.id)
         try:
             validate_category(catalog, body.name, body.parent_name)
+            for label in [body.name_uz,body.name_ru]:
+                if label:validate_category(catalog,label,body.parent_name)
         except ValueError as error:
             raise HTTPException(409, str(error))
-        session.add(Category(name=body.name, icon=body.icon, parent_name=body.parent_name,
+        session.add(Category(name=body.name, name_uz=body.name_uz,name_ru=body.name_ru,icon=body.icon, parent_name=body.parent_name,
                              user_id=user.id, is_default=False))
         try:
             await session.commit()
@@ -268,6 +289,8 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
             raise HTTPException(404, "Kategoriya topilmadi.")
         try:
             validate_category(catalog, body.name, body.parent_name, body.key)
+            for label in [body.name_uz,body.name_ru]:
+                if label:validate_category(catalog,label,body.parent_name,body.key)
         except ValueError as error:
             raise HTTPException(409, str(error))
         record = (await session.execute(select(Category).where(
@@ -279,6 +302,8 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
         record.display_name = body.name if body.name != body.key else None
         record.icon = body.icon
         record.parent_name = body.parent_name
+        for field in ['name_uz','name_ru']:
+            if field in body.model_fields_set:setattr(record,field,getattr(body,field))
         try:
             await session.commit()
         except IntegrityError:
@@ -288,9 +313,10 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
 
     @app.get("/api/summary")
     async def summary(start: date | None = None, end: date | None = None,
+                      currency: str | None = Query(default=None,pattern=r"^[A-Z]{3}$"), account_id: int | None = Query(default=None,gt=0),
                       user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
         start, end = period(start, end)
-        scoped = ledger_filter(user)
+        scoped, report_currency = await report_scope(session,user,currency,account_id)
         rows = (await session.execute(select(Transaction.date, Transaction.type, func.sum(Transaction.amount), func.count())
                 .where(*scoped, Transaction.date >= start, Transaction.date <= end)
                 .group_by(Transaction.date, Transaction.type).order_by(Transaction.date))).all()
@@ -307,10 +333,12 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
                     .where(*scoped).group_by(Transaction.type))).all()
         balance = sum((amount if kind == "income" else -amount if kind == "expense" else Decimal(0)
                        for kind, amount in all_time), Decimal(0))
+        from bot.services.finance import balance_adjustment
+        balance += await balance_adjustment(session,user.id,report_currency,account_id)
         cats = (await session.execute(select(func.coalesce(Transaction.category, "Другое"), func.sum(Transaction.amount))
                 .where(*scoped, Transaction.type == "expense", Transaction.date >= start, Transaction.date <= end)
                 .group_by(Transaction.category).order_by(func.sum(Transaction.amount).desc()))).all()
-        return {"currency": user.default_currency, "start": start, "end": end, "balance": str(balance),
+        return {"currency": report_currency, "start": start, "end": end, "balance": str(balance),
                 "income": str(totals["income"]), "expense": str(totals["expense"]), "count": count,
                 "daily": list(daily.values()), "categories": [{"name": name, "amount": str(amount)} for name, amount in cats]}
 
@@ -318,9 +346,11 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
     async def transactions(start: date | None = None, end: date | None = None,
                            search: str = Query("", max_length=100), kind: str = Query("", pattern="^(income|expense)?$"),
                            offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                           currency: str | None = Query(default=None,pattern=r"^[A-Z]{3}$"), account_id: int | None = Query(default=None,gt=0),
                            user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
         start, end = period(start, end)
-        filters = [*ledger_filter(user), Transaction.date >= start, Transaction.date <= end]
+        scope,_ = await report_scope(session,user,currency,account_id)
+        filters = [*scope, Transaction.date >= start, Transaction.date <= end]
         if kind:
             filters.append(Transaction.type == kind)
         if search:
@@ -335,8 +365,16 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
     @app.post("/api/transactions", status_code=201)
     async def create_transaction(body: TransactionInput, user: User = Depends(get_user),
                                  session: AsyncSession = Depends(get_session)):
-        item = Transaction(user_id=user.id, currency=user.default_currency, **body.model_dump())
+        from bot.services.finance import owned_account, check_category, budget_status
+        try:
+            account=await owned_account(session,user,body.account_id)
+            await check_category(session,user.id,body.category)
+        except ValueError as error:raise HTTPException(409,str(error))
+        item = Transaction(user_id=user.id, currency=account.currency, **{**body.model_dump(),"account_id":account.id})
         session.add(item)
+        from bot.services.finance import budget_status
+        await session.flush()
+        await budget_status(session,user)
         await session.commit()
         return serialize_tx(item)
 
@@ -344,22 +382,34 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
     async def edit_transaction(transaction_id: int, body: TransactionInput, user: User = Depends(get_user),
                                session: AsyncSession = Depends(get_session)):
         item = (await session.execute(select(Transaction).where(Transaction.id == transaction_id,
-                 *ledger_filter(user)).with_for_update())).scalar_one_or_none()
+                 Transaction.user_id==user.id).with_for_update())).scalar_one_or_none()
         if item is None:
             raise HTTPException(404, "Operatsiya topilmadi.")
-        for key, value in body.model_dump().items():
+        from bot.services.finance import owned_account, check_category
+        try:
+            account=await owned_account(session,user,body.account_id or item.account_id,item.currency)
+            await check_category(session,user.id,body.category,item.category)
+        except ValueError as error:raise HTTPException(409,str(error))
+        for key, value in {**body.model_dump(),"account_id":account.id}.items():
             setattr(item, key, value)
+        from bot.services.finance import budget_status
+        await session.flush()
+        await budget_status(session,user)
         await session.commit()
         return serialize_tx(item)
 
     @app.delete("/api/transactions/{transaction_id}", status_code=204)
     async def delete_transaction(transaction_id: int, user: User = Depends(get_user),
                                  session: AsyncSession = Depends(get_session)):
-        result = await session.execute(delete(Transaction).where(Transaction.id == transaction_id, *ledger_filter(user)))
+        result = await session.execute(delete(Transaction).where(Transaction.id == transaction_id, Transaction.user_id==user.id))
         if not result.rowcount:
             raise HTTPException(404, "Operatsiya topilmadi.")
         await session.commit()
 
+    from api.finance import router as finance_router
+    app.include_router(finance_router)
+    from api.backup import router as backup_router
+    app.include_router(backup_router)
     static = Path(__file__).resolve().parent.parent / "web" / "out"
     if static.is_dir():
         app.mount("/", StaticFiles(directory=static, html=True), name="website")

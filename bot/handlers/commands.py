@@ -10,6 +10,7 @@ from bot.config import settings
 from bot.database.repositories import UserRepository, CategoryRepository, TransactionRepository, CATEGORY_ICON_MAP
 from bot.models.transaction import Transaction
 from bot.models.csv_import import CsvImport
+from bot.services.finance import local_today
 from bot.services.i18n import category_label, current_language, tr, button_variants
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,10 @@ async def cmd_quick_transport(message: Message, session: AsyncSession):
         message.from_user.username, message.from_user.first_name
     )
 
+    if user.default_currency != "UZS":
+        await message.answer("Bu tezkor tugma faqat UZS uchun. / Эта быстрая кнопка доступна только для UZS.")
+        return
+
     await TransactionRepository.create(
         session=session,
         user_id=user.id,
@@ -141,12 +146,12 @@ async def cmd_quick_transport(message: Message, session: AsyncSession):
         category="Транспорт",
         description="Автобус / Метро",
         voice_text=None,
-        date=date.today(),
+        date=local_today(user),
     )
 
     # Count how many times used today
     today_txs = await TransactionRepository.get_by_period(
-        session, user.id, date.today(), date.today(), tx_type="expense"
+        session, user.id, local_today(user), local_today(user), tx_type="expense"
     )
     transport_today = sum(
         1 for t in today_txs
@@ -169,7 +174,7 @@ async def cmd_today(message: Message, session: AsyncSession):
         message.from_user.username, message.from_user.first_name
     )
 
-    today = date.today()
+    today = local_today(user)
     transactions = await TransactionRepository.get_by_period(
         session, user.id, today, today, tx_type="expense"
     )
@@ -217,8 +222,8 @@ async def cmd_week(message: Message, session: AsyncSession):
         message.from_user.username, message.from_user.first_name
     )
 
-    today = date.today()
-    week_ago = today - timedelta(days=6)  # Last 7 days including today
+    today = local_today(user)
+    week_ago = today - timedelta(days=(today.weekday()-(user.week_start or 0))%7)
 
     # Get daily totals
     daily_totals = await TransactionRepository.get_daily_totals(
@@ -238,7 +243,7 @@ async def cmd_week(message: Message, session: AsyncSession):
 
     # Build a dict of all days in range
     daily_dict: dict[date, float] = {}
-    for d in range(7):
+    for d in range((today-week_ago).days+1):
         day = week_ago + timedelta(days=d)
         daily_dict[day] = 0.0
     for tx_date, amount in daily_totals:
@@ -279,7 +284,7 @@ async def cmd_balance(message: Message, session: AsyncSession):
         message.from_user.username, message.from_user.first_name
     )
 
-    today = date.today()
+    today = local_today(user)
     month_start = today.replace(day=1)
 
     total_income = float(await TransactionRepository.get_total(session, user.id, month_start, today, "income"))

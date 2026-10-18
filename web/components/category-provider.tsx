@@ -5,8 +5,11 @@ import { categories } from "../lib/api";
 export type CategoryDetails = {
   name: string;
   display_name: string | null;
+  name_uz?: string | null;
+  name_ru?: string | null;
   icon: string | null;
   parent_name: string | null;
+  archived?: boolean;
   source: "default" | "custom" | "imported";
 };
 export const demoCategories: CategoryDetails[] = categories.map(name => ({name, display_name:null, icon:null, parent_name:null, source:"default"}));

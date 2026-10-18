@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import TelegramObject, BotCommand
@@ -103,11 +104,20 @@ async def main():
     dp.include_router(callbacks.router)
 
     dp.startup.register(on_startup)
+    finance_task = None
+    async def start_finance(bot: Bot):
+        nonlocal finance_task
+        from bot.services.finance_worker import finance_worker
+        finance_task = asyncio.create_task(finance_worker(async_session_maker,bot))
+    dp.startup.register(start_finance)
 
     logger.info("Starting bot polling...")
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:
+        if finance_task:
+            finance_task.cancel()
+            with suppress(asyncio.CancelledError): await finance_task
         await bot.session.close()
 
 if __name__ == "__main__":

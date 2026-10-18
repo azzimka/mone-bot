@@ -69,6 +69,8 @@ import { Settings } from "../components/settings";
 
 import { useCategories, demoCategories, type CategoryDetails } from "../components/category-provider";
 
+import { type MoneyAccount } from "../components/finance-tools";
+
 type View = "dashboard" | "transactions" | "analytics" | "settings";
 const titles: Record<View, string> = {
   dashboard: "Umumiy ko‘rinish",
@@ -100,6 +102,9 @@ export default function Page() {
   const [view, setView] = useState<View>("dashboard");
   const [sidebar, setSidebar] = useState(false);
   const [user, setUser] = useState<Profile | null>(null);
+  const [wallets,setWallets]=useState<MoneyAccount[]>([]);
+  const [reportCurrency,setReportCurrency]=useState("UZS");
+  useEffect(()=>{if(user)setReportCurrency(user.currency);},[user?.currency]);
   const [demo, setDemo] = useState<Entry[]>(demoEntries);
   const [month, setMonth] = useState("2026-10");
   const [range, setRange] = useState<DateRange | null>(null);
@@ -189,7 +194,7 @@ export default function Page() {
           }
           if (authRes?.user) {
             setUser(authRes.user);
-            setMonth(localDay().slice(0, 7));
+            setMonth(localDay(authRes.user.timezone).slice(0, 7));
             return;
           }
         } catch (e) {
@@ -202,7 +207,7 @@ export default function Page() {
           signal: controller.signal,
         });
         setUser(profile);
-        setMonth(localDay().slice(0, 7));
+        setMonth(localDay(profile.timezone).slice(0, 7));
       } catch {
         /* Unauthenticated visitors remain in explicitly labelled demo mode. */
       }
@@ -257,8 +262,9 @@ export default function Page() {
   useEffect(() => {
     if (!user) return;
     const controller = new AbortController();
+    request<MoneyAccount[]>("/accounts",{signal:controller.signal}).then(setWallets).catch(()=>{});
     request<CategoryDetails[]>("/category-settings", { signal: controller.signal })
-      .then(items=>{setCatalog(items);setCategoryOptions(items.map(item=>item.name));})
+      .then(items=>{setCatalog(items);setCategoryOptions(items.filter(item=>!item.archived).map(item=>item.name));})
       .catch(() => {});
     return () => controller.abort();
   }, [user, revision]);
@@ -288,13 +294,14 @@ export default function Page() {
     const params = new URLSearchParams({
       start,
       end,
+      currency:reportCurrency,
       search: searchTerm,
       kind,
       offset: String(page * 20),
       limit: "20",
     });
     Promise.all([
-      request<Summary>(`/summary?start=${start}&end=${end}`, {
+      request<Summary>(`/summary?start=${start}&end=${end}&currency=${reportCurrency}`, {
         signal: controller.signal,
       }),
       request<{ items: Entry[]; total: number }>(`/transactions?${params}`, {
@@ -327,6 +334,7 @@ export default function Page() {
     searchTerm,
     page,
     revision,
+    reportCurrency,
     categoryLabel,
     descriptionLabel,
   ]);
@@ -350,7 +358,7 @@ export default function Page() {
           const profile = await request<Profile>("/me");
           if (active) {
             setUser(profile);
-            setMonth(localDay().slice(0, 7));
+            setMonth(localDay(profile.timezone).slice(0, 7));
             setLogin(null);
             setNotice("Telegram hisobingiz ulandi.");
           }
@@ -446,6 +454,7 @@ export default function Page() {
                 t.id === (editor as Entry).id ? { ...t, ...data } : t,
               ),
         );
+      if(data.account_id){const selected=wallets.find(item=>item.id===data.account_id);if(selected)setReportCurrency(selected.currency);}
       setEditor(null);
       setPage(0);
       if (!range || data.date < range.start || data.date > range.end) { setRange(null); setMonth(data.date.slice(0, 7)); }
@@ -502,6 +511,7 @@ export default function Page() {
           const params = new URLSearchParams({
             start,
             end,
+            currency:reportCurrency,
             search: searchTerm,
             kind,
             offset: String(offset),
@@ -751,13 +761,14 @@ export default function Page() {
               <PeriodPicker
                 month={month}
                 range={range}
-                today={user ? localDay() : "2026-10-18"}
+                today={user ? localDay(user.timezone) : "2026-10-18"}
                 onChange={(selection) => {
                   setMonth(selection.month);
                   setRange(selection.range);
                   setPage(0);
                 }}
               />
+              {user&&new Set(wallets.map(item=>item.currency)).size>1&&<select className="report-currency" aria-label={t("Hisobot valyutasi")} value={reportCurrency} onChange={event=>{setReportCurrency(event.target.value);setPage(0);}}>{[...new Set([user.currency,...wallets.map(item=>item.currency)])].map(code=><option key={code} value={code}>{code}</option>)}</select>}
             </div>
           )}
           {(!user || user.language) && view === "dashboard" && (
@@ -1311,10 +1322,11 @@ export default function Page() {
               exporting={exporting}
               busy={loginBusy}
               onProfile={setUser}
-              onCategories={items=>{setCatalog(items);setCategoryOptions(items.map(item=>item.name));refresh();}}
+              onCategories={items=>{setCatalog(items);setCategoryOptions(items.filter(item=>!item.archived).map(item=>item.name));refresh();}}
               onLogin={beginLogin}
               onLogout={logout}
               onExport={exportCsv}
+              onChanged={refresh}
             />
           )}
         </main>
@@ -1343,6 +1355,9 @@ export default function Page() {
           entry={editor}
           newType={newKind}
           categories={categoryOptions}
+          accounts={wallets}
+          quickCategories={user?.quick_categories}
+          timeZone={user?.timezone}
           currency={currency}
           demo={!user}
           saving={saving}

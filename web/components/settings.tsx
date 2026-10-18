@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Check, Download, LogOut, Send } from "lucide-react";
 import { type Profile, request } from "../lib/api";
 import { useLanguage } from "./language-provider";
+import { FinanceTools } from "./finance-tools";
 import { CategoryManager } from "./category-manager";
 import { type CategoryDetails } from "./category-provider";
 import { type Language } from "../lib/translations";
@@ -18,6 +19,7 @@ export function Settings({
   onLogin,
   onLogout,
   onExport,
+  onChanged,
 }: {
   profile: Profile | null;
   categories: CategoryDetails[];
@@ -29,6 +31,7 @@ export function Settings({
   onLogin: () => void;
   onLogout: () => void;
   onExport: () => void;
+  onChanged: () => void;
 }) {
   const { t, language, setLanguage } = useLanguage();
   const [languageBusy, setLanguageBusy] = useState(false);
@@ -77,6 +80,7 @@ export function Settings({
           </p>
         )}
       </section>
+      <FinanceTools profile={profile} onProfile={onProfile} onChanged={onChanged} onLogin={onLogin}/>
       <CategoryManager categories={categories} authenticated={Boolean(profile)} onChange={onCategories}/>
       {error && (
         <p className="settings-feedback error" role="alert">

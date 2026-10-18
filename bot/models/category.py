@@ -22,6 +22,8 @@ class Category(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     icon: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    name_uz: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    name_ru: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     parent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(
@@ -29,6 +31,7 @@ class Category(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
     )
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     user: Mapped[Optional["User"]] = relationship("User")

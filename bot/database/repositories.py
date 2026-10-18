@@ -97,10 +97,15 @@ class TransactionRepository:
         date: Optional[date] = None,
     ) -> Transaction:
         """Create and persist a new transaction."""
+        from bot.services.finance import owned_account, check_category, budget_status
+        user = await session.get(User, user_id)
         if date is None:
-            date = datetime.now().date()
-
+            from bot.services.finance import local_today
+            date = local_today(user)
+        account = await owned_account(session, user, None, currency)
+        if category: await check_category(session, user_id, category)
         transaction = Transaction(
+            account_id=account.id,
             user_id=user_id,
             type=type,
             amount=Decimal(str(amount)),
@@ -112,6 +117,7 @@ class TransactionRepository:
         )
         session.add(transaction)
         await session.flush()
+        await budget_status(session, user)
         return transaction
 
     @staticmethod
@@ -127,6 +133,7 @@ class TransactionRepository:
             select(Transaction)
             .where(
                 Transaction.user_id == user_id,
+                Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery(),
                 Transaction.date >= start_date,
                 Transaction.date <= end_date,
             )
@@ -153,6 +160,7 @@ class TransactionRepository:
             )
             .where(
                 Transaction.user_id == user_id,
+                Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery(),
                 Transaction.type == tx_type,
                 Transaction.date >= start_date,
                 Transaction.date <= end_date,
@@ -179,6 +187,7 @@ class TransactionRepository:
             )
             .where(
                 Transaction.user_id == user_id,
+                Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery(),
                 Transaction.type == tx_type,
                 Transaction.date >= start_date,
                 Transaction.date <= end_date,
@@ -200,6 +209,7 @@ class TransactionRepository:
         """Get total sum of transactions for a user within a period by type."""
         stmt = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.user_id == user_id,
+                Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery(),
             Transaction.type == tx_type,
             Transaction.date >= start_date,
             Transaction.date <= end_date,
