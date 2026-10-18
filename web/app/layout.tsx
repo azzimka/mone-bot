@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import "./globals.css";
+import "./entry.css";
 
 export const metadata: Metadata = {
   title: "Mone — shaxsiy moliya kabineti",

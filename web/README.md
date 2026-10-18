@@ -9,6 +9,8 @@ PostgreSQL bazasidan foydalanadi. Hisob-kitoblar serverda `Decimal` orqali bajar
 - Kunlik pul oqimi, kategoriyalar tarkibi va batafsil xarajat tahlili.
 - Operatsiyalarni qidirish, turi va oyi bo‘yicha filtrlash, sahifalash.
 - Operatsiya qo‘shish, tahrirlash, tasdiqlab o‘chirish va filtrlangan tarixni CSV eksport qilish.
+- Mobil kiritish oynasi: katta summa maydoni, kategoriya tugmalari va qidiruv, ixtiyoriy izoh, bugun/kecha sanasi va doim ko‘rinadigan saqlash tugmasi.
+- Telefonda operatsiyalar sana, kategoriya, summa va izoh ko‘rsatilgan kartalar orqali tahrirlanadi.
 - Telegram botda tasdiqlash orqali kirish; HttpOnly sessiya cookie’lari.
 - Kirilgan hisob ma’lumotlari 30 soniyada va oynaga qaytilganda yangilanadi.
 - Asosiy valyuta bo‘yicha hisob. Begona valyutalar umumiy summaga qo‘shilmaydi.
@@ -74,7 +76,7 @@ Keyingi schema o‘zgarishlari uchun Alembic migratsiyalarini joriy qilish rejal
 ## Tekshiruvlar
 
 Ildizda: `python -m unittest discover -s tests -v`.
-`web/` ichida: `npm run typecheck` va `npm run build`.
+`web/` ichida: `npm test`, `npm run typecheck` va `npm run build`.
 
 PostgreSQL concurrency testlari uchun `CSV_TEST_POSTGRES_URL`ga test bazasining
 `postgresql+asyncpg://...` URL’ini bering. Testlar alohida vaqtinchalik schema

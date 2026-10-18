@@ -2,10 +2,12 @@
   "name": "mone-web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test lib/entry.test.mjs"
   },
   "dependencies": {
     "@types/node": "26.6.5",
