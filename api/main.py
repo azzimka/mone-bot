@@ -50,7 +50,8 @@ async def get_user(request: Request, session: AsyncSession = Depends(get_session
         if init_data_raw and bot_token:
             try:
                 parsed = safe_parse_webapp_init_data(token=bot_token, init_data=init_data_raw)
-                if parsed.user and parsed.user.id:
+                age = (datetime.now(timezone.utc) - parsed.auth_date).total_seconds()
+                if parsed.user and parsed.user.id and age <= 86400 * 3:
                     return await UserRepository.get_or_create(
                         session=session,
                         telegram_id=parsed.user.id,
@@ -410,6 +411,10 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
     app.include_router(finance_router)
     from api.backup import router as backup_router
     app.include_router(backup_router)
+    from api.exchange_rates import router as rates_router
+    from bot.services.exchange_rates import ExchangeRateService
+    app.state.exchange_rates = ExchangeRateService()
+    app.include_router(rates_router)
     static = Path(__file__).resolve().parent.parent / "web" / "out"
     if static.is_dir():
         app.mount("/", StaticFiles(directory=static, html=True), name="website")

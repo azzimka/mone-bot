@@ -1,12 +1,13 @@
 from bot.services.i18n import category_label, tr, button_variants
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, Any, List
 from .ai_parser import ParsedTransaction
 
 class ReportService:
-    def format_amount(self, amount: float, currency: str) -> str:
+    def format_amount(self, amount: Decimal | float | int, currency: str) -> str:
         """Formats amount with proper separators and currency symbol."""
-        formatted_amount = f"{amount:,.0f}".replace(",", " ")
+        formatted_amount = f"{Decimal(str(amount)):,.2f}".rstrip("0").rstrip(".").replace(",", " ")
         return f"{formatted_amount} {currency}"
 
     def format_daily_report(self, transactions: List[Dict[str, Any]], total_income: float, total_expense: float, currency: str = 'UZS') -> str:

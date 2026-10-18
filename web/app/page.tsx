@@ -71,6 +71,7 @@ import { Settings } from "../components/settings";
 import { useCategories, demoCategories, type CategoryDetails } from "../components/category-provider";
 
 import { type MoneyAccount } from "../components/finance-tools";
+import { PortfolioValuation } from "../components/exchange-rates";
 
 type View = "dashboard" | "transactions" | "analytics" | "settings";
 const titles: Record<View, string> = {
@@ -830,6 +831,8 @@ export default function Page() {
                     <div className="stat-value">
                       {money(summary.balance)} <span>{currency}</span>
                     </div>
+                    {user&&new Set(wallets.map(item=>item.currency)).size>1&&
+                      <PortfolioValuation base={reportCurrency} revision={revision}/>}
                     <div className="stat-foot">
                       <span className="balance-pill">
                         {t("Barcha davrlar")}

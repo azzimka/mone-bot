@@ -23,8 +23,18 @@ async def check():
                     if not {column.name for column in table.columns}.issubset(found):
                         raise RuntimeError('Incomplete database schema')
             await connection.run_sync(verify_schema)
-        await engine.dispose()
         print("Database schema initialized and all model columns verified.", flush=True)
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+        from bot.services.exchange_rates import ExchangeRateService, RatesUnavailable
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False).begin() as session:
+                rates = await ExchangeRateService().get(session)
+                print("CBU rates ready:", rates.effective_date.isoformat(),
+                      "currencies:", len(rates.rates), "cached fallback:", rates.stale, flush=True)
+        except RatesUnavailable:
+            # An external outage must not take down the user's original-currency ledger.
+            print("CBU temporarily unavailable; original-currency accounting remains available.", flush=True)
+        await engine.dispose()
     except Exception as error:
         print("Deployment check failed:", type(error).__name__, flush=True)
         if hasattr(error, "errors"):

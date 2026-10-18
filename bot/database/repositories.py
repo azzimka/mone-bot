@@ -95,14 +95,22 @@ class TransactionRepository:
         description: Optional[str] = None,
         voice_text: Optional[str] = None,
         date: Optional[date] = None,
+        account_id: Optional[int] = None,
     ) -> Transaction:
         """Create and persist a new transaction."""
+        from bot.services.csv_import import parse_amount
+        amount = parse_amount(str(amount))
+        if type not in {"income", "expense"} or amount <= 0:
+            raise ValueError("Income and expense amounts must be positive")
+        if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+            raise ValueError("Currency must be a three-letter code")
+        currency = currency.upper()
         from bot.services.finance import owned_account, check_category, budget_status
         user = await session.get(User, user_id)
         if date is None:
             from bot.services.finance import local_today
             date = local_today(user)
-        account = await owned_account(session, user, None, currency)
+        account = await owned_account(session, user, account_id, currency)
         if category: await check_category(session, user_id, category)
         transaction = Transaction(
             account_id=account.id,

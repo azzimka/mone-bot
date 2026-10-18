@@ -73,6 +73,28 @@ async def account_balances(session, user: User) -> list[dict]:
     return result
 
 
+async def balance_totals(session, user: User, currency: str | None = None,
+                         account_id: int | None = None) -> dict:
+    """One currency/account scope shared by bot confirmations and reconciliation."""
+    await ensure_accounts(session, user)
+    if account_id is not None:
+        account = await owned_account(session, user, account_id, currency)
+        currency = account.currency
+    currency = currency or user.default_currency
+    filters = [Transaction.user_id == user.id, Transaction.currency == currency]
+    if account_id is not None:
+        filters.append(Transaction.account_id == account_id)
+    rows = (await session.execute(select(Transaction.type, func.sum(Transaction.amount))
+                                  .where(*filters).group_by(Transaction.type))).all()
+    amounts = dict(rows)
+    income = amounts.get('income', Decimal(0))
+    expense = amounts.get('expense', Decimal(0))
+    adjustment = await balance_adjustment(session, user.id, currency, account_id)
+    return {'total_income': income, 'total_expenses': expense,
+            'balance': income - expense + adjustment, 'currency': currency,
+            'account_id': account_id}
+
+
 def next_occurrence(day: date, frequency: str, anchor: int) -> date:
     if frequency == "daily": return day + timedelta(days=1)
     if frequency == "weekly": return day + timedelta(days=7)

@@ -1,158 +1,131 @@
-from bot.services.i18n import category_label, tr, button_variants
+"""Confirm only the owner's pending entries and keep every currency separate."""
+
 import logging
-from datetime import date, datetime, timedelta
-from aiogram import Router, F
+
+from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repositories import TransactionRepository
-from bot.services.reports import ReportService
+from bot.handlers.commands import fmt
+from bot.models import User
+from bot.services.csv_import import CsvImportError, parse_amount
+from bot.services.finance import balance_totals, local_today, owned_account
+from bot.services.i18n import category_label, current_language, tr
 
 logger = logging.getLogger(__name__)
 router = Router()
-report_service = ReportService()
 
-# In-memory dict for pending transactions
-# Format: UUID -> {"user_id": int, "transaction": dict, "voice_text": str}
+# UUID -> owner database ID, parsed entry and source text. A click can be handled
+# only once at a time, including while an awaited database write is running.
 pending_transactions: dict[str, dict] = {}
+processing_transactions: set[str] = set()
+
+
+def _localized(uz: str, ru: str) -> str:
+    return uz if current_language.get() == "uz" else ru
+
+
+async def _pending_owner(callback: CallbackQuery, session: AsyncSession, pending: dict) -> User | None:
+    owner = await session.get(User, pending["user_id"])
+    if owner is None or owner.telegram_id != callback.from_user.id:
+        await callback.answer(_localized("Bu yozuv sizga tegishli emas.", "Эта запись принадлежит другому пользователю."), show_alert=True)
+        return None
+    return owner
 
 
 @router.callback_query(F.data.startswith("confirm:"))
 async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession):
-    """Handle transaction confirmation — save to database."""
     tx_id = callback.data.split(":", 1)[1]
-
-    pending_data = pending_transactions.get(tx_id)
-    if not pending_data:
-        await callback.message.edit_text(tr('❌ Данная операция уже обработана или устарела.'))
-        await callback.answer()
+    pending = pending_transactions.get(tx_id)
+    if pending is None:
+        await callback.answer(tr("❌ Данная операция уже обработана или устарела."), show_alert=True)
         return
+    user = await _pending_owner(callback, session, pending)
+    if user is None:
+        return
+    if tx_id in processing_transactions:
+        await callback.answer(_localized("Yozuv saqlanmoqda…", "Запись сохраняется…"))
+        return
+    processing_transactions.add(tx_id)
+    committed = False
+    try:
+        tx = pending["transaction"]
+        currency = tx.get("currency") or user.default_currency
+        if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+            raise ValueError("Invalid currency")
+        currency = currency.upper()
+        amount = parse_amount(str(tx["amount"]))
+        kind = tx["type"]
+        if kind not in {"income", "expense", "reconcile"} or amount < 0 or (kind != "reconcile" and amount == 0):
+            raise ValueError("Invalid transaction")
+        account = await owned_account(session, user, tx.get("account_id"), currency)
 
-    # Extract data
-    user_id = pending_data["user_id"]
-    tx_dict = pending_data["transaction"]
-    voice_text = pending_data.get("voice_text", "")
-
-    # Special handling for balance reconciliation
-    if tx_dict["type"] == "reconcile":
-        from decimal import Decimal
-        from sqlalchemy import select, func
-        from bot.models.transaction import Transaction as TxModel
-
-        target_amount = Decimal(str(tx_dict["amount"]))
-        currency = tx_dict.get("currency", "UZS")
-
-        stmt_income = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
-            TxModel.user_id == user_id, TxModel.type == "income"
-        )
-        stmt_expense = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
-            TxModel.user_id == user_id, TxModel.type == "expense"
-        )
-        income_total = (await session.execute(stmt_income)).scalar() or Decimal("0")
-        expense_total = (await session.execute(stmt_expense)).scalar() or Decimal("0")
-        current_balance = Decimal(str(income_total)) - Decimal(str(expense_total))
-
-        diff = target_amount - current_balance
-
-        if diff > 0:
-            diff_fmt = f"{float(diff):,.0f}".replace(",", " ")
-            await TransactionRepository.create(
-                session=session,
-                user_id=user_id,
-                type="income",
-                amount=diff,
-                currency=currency,
-                category="Сверка",
-                description=f"Сверка (+{diff_fmt} {currency})",
-                voice_text=voice_text,
-                date=date.today(),
+        if kind == "reconcile":
+            totals = await balance_totals(session, user, currency, account.id)
+            before = totals["balance"]
+            difference = amount - before
+            if difference:
+                await TransactionRepository.create(
+                    session=session, user_id=user.id, account_id=account.id,
+                    type="income" if difference > 0 else "expense", amount=abs(difference),
+                    currency=currency, category="Сверка",
+                    description=f"Сверка ({difference:+f} {currency})",
+                    voice_text=pending.get("voice_text", ""), date=local_today(user),
+                )
+            success = _localized(
+                f"⚖️ Balans tenglashtirildi\n💳 {account.name}\nOldin: {fmt(before, currency)}\nHozir: {fmt(amount, currency)}",
+                f"⚖️ Баланс сверен\n💳 {account.name}\nБыло: {fmt(before, currency)}\nСейчас: {fmt(amount, currency)}",
             )
-            diff_str = tr('+{p1} {p3} (доход)' ,p1=f'{diff_fmt}', p3=f'{currency}')
-        elif diff < 0:
-            abs_diff = abs(diff)
-            abs_diff_fmt = f"{float(abs_diff):,.0f}".replace(",", " ")
-            await TransactionRepository.create(
-                session=session,
-                user_id=user_id,
-                type="expense",
-                amount=abs_diff,
-                currency=currency,
-                category="Сверка",
-                description=f"Сверка (-{abs_diff_fmt} {currency})",
-                voice_text=voice_text,
-                date=date.today(),
-            )
-            diff_str = tr('-{p1} {p3} (расход)' ,p1=f'{abs_diff_fmt}', p3=f'{currency}')
         else:
-            diff_str = tr('0 UZS (совпадает)')
-
-        curr_fmt = f"{float(current_balance):,.0f}".replace(",", " ")
-        target_fmt = f"{float(target_amount):,.0f}".replace(",", " ")
-
-        success_text = (
-            tr('⚖️ *Баланс синхронизирован!*\n\n├ Было в боте:  `{p1} {p3}`\n├ Корректировка: `{p5}`\n└ Фактический:   *{p7} {p9}* 🟢' ,p1=f'{curr_fmt}', p3=f'{currency}', p5=f'{diff_str}', p7=f'{target_fmt}', p9=f'{currency}')
-        )
-        await callback.message.edit_text(success_text, parse_mode="Markdown")
-        del pending_transactions[tx_id]
-        await callback.answer(tr('⚖️ Баланс сверен!'))
-        return
-
-    # Save to database
-    await TransactionRepository.create(
-        session=session,
-        user_id=user_id,
-        type=tx_dict["type"],
-        amount=tx_dict["amount"],
-        currency=tx_dict.get("currency", "UZS"),
-        category=tx_dict.get("category", "Другое"),
-        description=tx_dict.get("description", ""),
-        voice_text=voice_text,
-        date=date.today(),
-    )
-
-    # Format success message
-    type_emoji = "📥" if tx_dict["type"] == "income" else "📤"
-    type_str = tr('Доход') if tx_dict["type"] == "income" else tr('Расход')
-    amount = tx_dict["amount"]
-    currency = tx_dict.get("currency", "UZS")
-    amount_str = f"{amount:,.0f}".replace(",", " ")
-
-    success_text = f"✅ {type_str}: {amount_str} {currency}\n📂 {category_label(tx_dict.get('category', 'Другое'))}"
-
-    # For expenses: show remaining balance
-    if tx_dict["type"] == "expense":
-        from sqlalchemy import select, func
-        from bot.models.transaction import Transaction as TxModel
-
-        stmt_income = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
-            TxModel.user_id == user_id, TxModel.type == "income"
-        )
-        stmt_expense = select(func.coalesce(func.sum(TxModel.amount), 0)).where(
-            TxModel.user_id == user_id, TxModel.type == "expense"
-        )
-        income_total = (await session.execute(stmt_income)).scalar() or 0
-        expense_total = (await session.execute(stmt_expense)).scalar() or 0
-        balance = float(income_total) - float(expense_total)
-
-        # Only show balance if user has set it up (income > 0)
-        if float(income_total) > 0:
-            balance_str = f"{balance:,.0f}".replace(",", " ")
-            success_text += tr('\n\n💵 Остаток: *{p1} {p3}*' ,p1=f'{balance_str}', p3=f'{currency}')
-
-    await callback.message.edit_text(success_text, parse_mode="Markdown")
-
-    # Clean up
-    del pending_transactions[tx_id]
-    await callback.answer(tr('✅ Успешно сохранено!'))
+            await TransactionRepository.create(
+                session=session, user_id=user.id, account_id=account.id,
+                type=kind, amount=amount, currency=currency,
+                category=tx.get("category", "Другое"), description=tx.get("description", ""),
+                voice_text=pending.get("voice_text", ""), date=local_today(user),
+            )
+            success = f"✅ {tr('Доход') if kind == 'income' else tr('Расход')}: {fmt(amount, currency)}\n📂 {category_label(tx.get('category', 'Другое'))}"
+            if kind == "expense":
+                totals = await balance_totals(session, user, currency)
+                success += _localized(
+                    f"\n\n💵 Qoldiq: {fmt(totals['balance'], currency)}",
+                    f"\n\n💵 Остаток: {fmt(totals['balance'], currency)}",
+                )
+        # A successful Telegram message must mean the ledger is durable. Remove
+        # the pending entry before network delivery so a failed edit cannot make
+        # a later click save the already committed transaction a second time.
+        await session.commit()
+        committed = True
+        pending_transactions.pop(tx_id, None)
+        await callback.message.edit_text(success)
+        await callback.answer(tr("✅ Успешно сохранено!"))
+    except (ValueError, CsvImportError):
+        if committed:
+            raise
+        await session.rollback()
+        await callback.answer(_localized("Yozuv saqlanmadi. Summa, valyuta va kategoriyani tekshiring.", "Запись не сохранена. Проверьте сумму, валюту и категорию."), show_alert=True)
+    except Exception as exc:
+        if committed:
+            raise
+        await session.rollback()
+        logger.error("Transaction confirmation failed (%s)", type(exc).__name__)
+        await callback.answer(_localized("Saqlanmadi. Tasdiqlash tugmasini qayta bosing.", "Не сохранено. Нажмите подтверждение ещё раз."), show_alert=True)
+    finally:
+        processing_transactions.discard(tx_id)
 
 
 @router.callback_query(F.data.startswith("cancel:"))
-async def on_cancel_transaction(callback: CallbackQuery):
-    """Handle transaction cancellation."""
+async def on_cancel_transaction(callback: CallbackQuery, session: AsyncSession):
     tx_id = callback.data.split(":", 1)[1]
-
-    if tx_id in pending_transactions:
-        del pending_transactions[tx_id]
-
-    await callback.message.edit_text(tr('❌ Операция отменена.'))
-    await callback.answer(tr('Отменено'))
+    pending = pending_transactions.get(tx_id)
+    if pending is None:
+        await callback.answer(tr("❌ Данная операция уже обработана или устарела."), show_alert=True)
+        return
+    if await _pending_owner(callback, session, pending) is None:
+        return
+    if tx_id in processing_transactions:
+        await callback.answer(_localized("Yozuv saqlanmoqda…", "Запись сохраняется…"))
+        return
+    pending_transactions.pop(tx_id, None)
+    await callback.message.edit_text(tr("❌ Операция отменена."))
+    await callback.answer(tr("Отменено"))

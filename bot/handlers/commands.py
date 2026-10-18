@@ -1,5 +1,7 @@
 import logging
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
+from decimal import Decimal
+from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeChat, MenuButtonWebApp, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -43,9 +45,11 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     return keyboard
 
 
-def fmt(amount: float, currency: str = "UZS") -> str:
-    """Format amount with space separator."""
-    return f"{amount:,.0f}".replace(",", " ") + f" {currency}"
+def fmt(amount: Decimal | float | int, currency: str = "UZS") -> str:
+    """Format ledger values without losing cents or converting to float."""
+    value = Decimal(str(amount))
+    number = f"{value:,.2f}".rstrip("0").rstrip(".").replace(",", " ")
+    return f"{number} {currency}"
 
 
 @router.message(CommandStart())
@@ -178,9 +182,9 @@ async def cmd_today(message: Message, session: AsyncSession):
     transactions = await TransactionRepository.get_by_period(
         session, user.id, today, today, tx_type="expense"
     )
-    total = float(await TransactionRepository.get_total(
+    total = await TransactionRepository.get_total(
         session, user.id, today, today, "expense"
-    ))
+    )
 
     if not transactions:
         await message.answer(
@@ -190,17 +194,16 @@ async def cmd_today(message: Message, session: AsyncSession):
         )
         return
 
-    from datetime import timezone, timedelta
-    uzb_tz = timezone(timedelta(hours=5))
+    user_timezone = ZoneInfo(user.timezone or "Asia/Tashkent")
     
     lines = [tr('📋 *Расходы за {p1}*\n' ,p1=f"{today.strftime('%d.%m.%Y')}")]
     for tx in transactions:
         icon = CATEGORY_ICON_MAP.get(tx.category or "Другое", "❓")
-        amount_str = fmt(float(tx.amount), tx.currency)
+        amount_str = fmt(tx.amount, tx.currency)
         desc = tx.description or tx.category or "—"
         
-        # Format time to UTC+5 (Uzbekistan)
-        time_str = tx.created_at.astimezone(uzb_tz).strftime("%H:%M")
+        stamp = tx.created_at if tx.created_at.tzinfo else tx.created_at.replace(tzinfo=timezone.utc)
+        time_str = stamp.astimezone(user_timezone).strftime("%H:%M")
         
         lines.append(f"`{time_str}` {icon} {desc} — *{amount_str}*")
 
@@ -229,9 +232,9 @@ async def cmd_week(message: Message, session: AsyncSession):
     daily_totals = await TransactionRepository.get_daily_totals(
         session, user.id, week_ago, today, tx_type="expense"
     )
-    total_week = float(await TransactionRepository.get_total(
+    total_week = await TransactionRepository.get_total(
         session, user.id, week_ago, today, "expense"
-    ))
+    )
 
     if not daily_totals:
         await message.answer(
@@ -242,12 +245,12 @@ async def cmd_week(message: Message, session: AsyncSession):
         return
 
     # Build a dict of all days in range
-    daily_dict: dict[date, float] = {}
+    daily_dict: dict[date, Decimal] = {}
     for d in range((today-week_ago).days+1):
         day = week_ago + timedelta(days=d)
-        daily_dict[day] = 0.0
+        daily_dict[day] = Decimal(0)
     for tx_date, amount in daily_totals:
-        daily_dict[tx_date] = float(amount)
+        daily_dict[tx_date] = amount
 
     # Find max for bar scaling
     max_amount = max(daily_dict.values()) if daily_dict.values() else 1
@@ -278,24 +281,9 @@ async def cmd_week(message: Message, session: AsyncSession):
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message, session: AsyncSession):
-    """Show total balance for current month."""
-    user = await UserRepository.get_or_create(
-        session, message.from_user.id,
-        message.from_user.username, message.from_user.first_name
-    )
-
-    today = local_today(user)
-    month_start = today.replace(day=1)
-
-    total_income = float(await TransactionRepository.get_total(session, user.id, month_start, today, "income"))
-    total_expense = float(await TransactionRepository.get_total(session, user.id, month_start, today, "expense"))
-    balance = total_income - total_expense
-    balance_emoji = "📈" if balance >= 0 else "📉"
-
-    report = (
-        tr('💰 *Баланс за {p1}*\n\n📥 Доходы: {p3}\n📤 Расходы: {p5}\n{p7} Баланс: {p9}' ,p1=f"{today.strftime('%B %Y')}", p3=f'{fmt(total_income, user.default_currency)}', p5=f'{fmt(total_expense, user.default_currency)}', p7=f'{balance_emoji}', p9=f'{fmt(balance, user.default_currency)}')
-    )
-    await message.answer(report, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    """Use the same current-balance screen for the command and menu button."""
+    from bot.handlers.balance import cmd_balance as show_balance
+    await show_balance(message, session)
 
 
 @router.message(Command("reset"))
@@ -345,9 +333,10 @@ MONTH_NAMES = [
 
 @router.message(F.text.in_(button_variants('📅 Расходы за месяц')))
 @router.message(Command("month"))
-async def cmd_month_menu(message: Message):
+async def cmd_month_menu(message: Message, session: AsyncSession):
     """Show inline keyboard with months of the current year."""
-    today = date.today()
+    user = await UserRepository.get_or_create(session, message.from_user.id)
+    today = local_today(user)
     year = today.year
     
     keyboard = []
@@ -405,12 +394,12 @@ async def process_month_report(callback, session: AsyncSession):
         return
 
     lines = [tr('📅 *Расходы за {p1}*\n' ,p1=f'{name_display}')]
-    total = 0
+    total = Decimal(0)
     for cat, amount in summary:
-        total += float(amount)
+        total += amount
         icon = CATEGORY_ICON_MAP.get(cat or "Другое", "❓")
         cat_name = category_label(cat or "Другое")
-        lines.append(f"{icon} {cat_name} — *{fmt(float(amount), user.default_currency)}*")
+        lines.append(f"{icon} {cat_name} — *{fmt(amount, user.default_currency)}*")
 
     lines.append(tr('\n💸 *Итого за месяц: {p1}*' ,p1=f'{fmt(total, user.default_currency)}'))
 

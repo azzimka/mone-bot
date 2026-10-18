@@ -29,6 +29,21 @@ class FinancePostgresTests(unittest.IsolatedAsyncioTestCase):
         async with self.pool() as session:
             self.assertEqual((await session.execute(select(func.count()).select_from(Account))).scalar_one(),1)
 
+    async def test_parallel_rate_caches_share_one_daily_snapshot(self):
+        from unittest.mock import AsyncMock
+        from bot.models import ExchangeRateSnapshot
+        from bot.services.exchange_rates import ExchangeRateService, cbu_today
+        today=cbu_today()
+        payload=[{'Ccy':'USD','Nominal':'1','Rate':'12000','Date':today.strftime('%d.%m.%Y')}]
+        async def load():
+            service=ExchangeRateService(AsyncMock(return_value=payload))
+            async with self.pool.begin() as session:
+                book=await service.get(session,today)
+                return book.ratio('USD','UZS')
+        self.assertEqual(await asyncio.gather(load(),load()),[Decimal('12000'),Decimal('12000')])
+        async with self.pool() as session:
+            self.assertEqual((await session.execute(select(func.count()).select_from(ExchangeRateSnapshot))).scalar_one(),1)
+
     async def test_overlapping_recurring_workers_insert_only_once(self):
         async with self.pool.begin() as session:
             user=await session.get(User,self.user_id)

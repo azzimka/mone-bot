@@ -71,7 +71,10 @@ async def restore_backup(body:BackupDocument,user=Depends(get_user),session=Depe
     encoded=json.dumps(body.model_dump(mode='json'),sort_keys=True).encode()
     file_hash=hashlib.sha256(encoded).hexdigest()
     accounts=await ensure_accounts(session,user)
-    if (await session.execute(select(RestoreLog.id).where(RestoreLog.user_id==user.id,RestoreLog.file_hash==file_hash))).scalar_one_or_none():return {'restored':0,'skipped':len(body.transactions),'already_restored':True}
+    # An earlier restore is an audit record, not proof that its rows still exist.
+    # Reconcile again so this same file can recover a subsequent accidental deletion.
+    previously_restored=(await session.execute(select(RestoreLog.id).where(RestoreLog.user_id==user.id,RestoreLog.file_hash==file_hash))).scalar_one_or_none() is not None
+    changed=False
     mapping={}
     if len({item.id for item in body.accounts})!=len(body.accounts):raise HTTPException(422,'Zaxiradagi hisoblar takrorlangan.')
     for record in body.accounts:
@@ -80,6 +83,7 @@ async def restore_backup(body:BackupDocument,user=Depends(get_user),session=Depe
         if account is None:
             account=Account(user_id=user.id,**record.model_dump(exclude={'id'}))
             session.add(account);await session.flush();accounts.append(account)
+            changed=True
         mapping[record.id]=account.id
     def mapped(key):
         if key not in mapping:raise HTTPException(422,'Zaxirada hisobga bog‘lanish noto‘g‘ri.')
@@ -89,6 +93,7 @@ async def restore_backup(body:BackupDocument,user=Depends(get_user),session=Depe
         if not any(item.name==record.name for item in existing_categories):
             item=Category(user_id=user.id,is_default=False,**record.model_dump())
             session.add(item);existing_categories.append(item)
+            changed=True
     await session.flush()
     from bot.services.categories import category_catalog
     catalog=await category_catalog(session,user.id)
@@ -106,6 +111,7 @@ async def restore_backup(body:BackupDocument,user=Depends(get_user),session=Depe
         key=fingerprint(data)
         if counts[key]>0:counts[key]-=1;skipped+=1;continue
         session.add(Transaction(user_id=user.id,**data));restored+=1
+        changed=True
     transfer_keys=set((await session.execute(select(Transfer.request_key).where(Transfer.user_id==user.id))).scalars())
     for row in body.transfers:
         if row.request_key in transfer_keys:continue
@@ -113,10 +119,13 @@ async def restore_backup(body:BackupDocument,user=Depends(get_user),session=Depe
         if source==destination or row.destination_amount is None:raise HTTPException(422,'Zaxiradagi o‘tkazma noto‘g‘ri.')
         if account_by_id[source].currency==account_by_id[destination].currency and row.source_amount!=row.destination_amount:raise HTTPException(422,'Zaxiradagi o‘tkazma summalari mos emas.')
         session.add(Transfer(user_id=user.id,**{**row.model_dump(),'source_id':source,'destination_id':destination}));transfer_keys.add(row.request_key)
+        changed=True
     budget_keys=set((await session.execute(select(Budget.month,Budget.category,Budget.currency).where(Budget.user_id==user.id))).all())
     for row in body.budgets:
         key=(row.month,row.category,row.currency)
-        if key not in budget_keys:session.add(Budget(user_id=user.id,**{**row.model_dump(),'notify_telegram':False}));budget_keys.add(key)
+        if key not in budget_keys:
+            session.add(Budget(user_id=user.id,**{**row.model_dump(),'notify_telegram':False}));budget_keys.add(key)
+            changed=True
     rules=(await session.execute(select(RecurringRule).where(RecurringRule.user_id==user.id))).scalars().all()
     for row in body.recurring:
         account_id=mapped(row.account_id)
@@ -124,13 +133,16 @@ async def restore_backup(body:BackupDocument,user=Depends(get_user),session=Depe
         # Restored automations require explicit re-enabling by their owner.
         item=RecurringRule(user_id=user.id,**{**row.model_dump(),'account_id':account_id,'enabled':False})
         session.add(item);rules.append(item)
+        changed=True
     if body.preferences:
         for key,value in body.preferences.model_dump(exclude_none=True).items():
             if key=='language' and user.language is None:continue
             if key=='quick_categories':
                 available={item['name'] for item in catalog if not item['archived']}
                 value=json.dumps([name for name in value if name in available])
-            setattr(user,'default_currency' if key=='currency' else key,value)
-    session.add(RestoreLog(user_id=user.id,file_hash=file_hash))
+            field='default_currency' if key=='currency' else key
+            if getattr(user,field)!=value:changed=True
+            setattr(user,field,value)
+    if not previously_restored:session.add(RestoreLog(user_id=user.id,file_hash=file_hash))
     await session.commit()
-    return {'restored':restored,'skipped':skipped,'already_restored':False}
+    return {'restored':restored,'skipped':skipped,'already_restored':previously_restored and not changed}

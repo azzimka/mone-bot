@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from sqlalchemy import select
 from bot.models import User, Budget, BudgetAlert, RecurringRule
 from bot.services.finance import ensure_accounts, recurring_due, budget_status
@@ -23,6 +24,12 @@ async def finance_tick(pool,bot):
     async with pool.begin() as session:
         pending=(await session.execute(select(BudgetAlert,Budget,User).join(Budget,BudgetAlert.budget_id==Budget.id).join(User,Budget.user_id==User.id).where(BudgetAlert.delivered_at.is_(None),BudgetAlert.attempts<3,Budget.notify_telegram.is_(True)).with_for_update(of=BudgetAlert,skip_locked=True).limit(100))).all()
         for alert,budget,user in pending:
+            current=next((item for item in await budget_status(session,user,budget.month,create_alerts=False) if item['id']==budget.id),None)
+            if current is None or Decimal(current['percent'])<alert.level:
+                # Corrected expenses or a raised limit invalidate an unsent warning.
+                # Removing it permits a fresh warning if the threshold is reached later.
+                await session.delete(alert)
+                continue
             # Explicit per-budget opt-in is required; no historical users are opted in.
             alert.attempts+=1
             from bot.services.categories import category_catalog

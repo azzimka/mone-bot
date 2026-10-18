@@ -2,20 +2,42 @@ import asyncio
 import logging
 import json
 from typing import Literal, Optional
-from pydantic import BaseModel, ValidationError
+from decimal import Decimal
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from groq import Groq
 
 logger = logging.getLogger(__name__)
 
 class ParsedTransaction(BaseModel):
     type: Literal["income", "expense", "reconcile"]
-    amount: float
+    amount: Decimal = Field(ge=0, le=Decimal("9999999999999.99"), max_digits=15, decimal_places=2)
     currency: str = "UZS"
-    category: str
-    description: str
+    category: str = Field(min_length=1, max_length=100)
+    description: str = Field(max_length=2000)
+
+    @field_validator("currency")
+    @classmethod
+    def valid_currency(cls, value: str) -> str:
+        value = value.strip().upper()
+        if len(value) != 3 or not value.isascii() or not value.isalpha():
+            raise ValueError("Currency must be a three-letter code")
+        return value
+
+    @model_validator(mode="after")
+    def positive_entry_amount(self):
+        if self.type != "reconcile" and self.amount <= 0:
+            raise ValueError("Income and expense amounts must be positive")
+        return self
 
 class ParsedTransactions(BaseModel):
     transactions: list[ParsedTransaction]
+    needs_account_selection: bool = False
+
+    @model_validator(mode="after")
+    def do_not_guess_account(self):
+        if self.needs_account_selection:
+            self.transactions = []
+        return self
 
 class AIParser:
     def __init__(self, api_key: str):
@@ -31,7 +53,7 @@ class AIParser:
         try:
             return await asyncio.to_thread(self._parse_sync, text, default_currency)
         except Exception as e:
-            logger.error(f"Failed to parse text: {e}")
+            logger.error("Financial message parsing failed (%s)", type(e).__name__)
             return None
 
     def _parse_sync(self, text: str, default_currency: str) -> ParsedTransactions:
@@ -43,7 +65,7 @@ class AIParser:
 - type:
     * "expense" — трата, покупка, оплата (еда, такси, кафе и т.д.)
     * "income" — доход (зарплата, приход, вернули долг, подарок)
-    * "reconcile" — сверка / установка фактического баланса. Используется, когда пользователь сообщает СВОЙ ТЕКУЩИЙ ОСТАТОК / БАЛАНС (например: "мой баланс 50 тысяч", "баланс 50к", "у меня сейчас 50 000 сум", "сведи баланс на 50 000", "meni balansim 50 ming", "balans 50000"). Если пользователь перечисляет суммы на разных картах/в кармане ("на карте 30к и в кармане 20к", "на одной карте 25к, на второй 15к и 10к налик"), сложи их в одну общую сумму amount.
+    * "reconcile" — сверка / установка фактического баланса ОДНОГО счёта по умолчанию. Используется, когда пользователь сообщает СВОЙ ТЕКУЩИЙ ОСТАТОК / БАЛАНС (например: "мой баланс 50 тысяч", "баланс 50к", "сведи баланс на 50 000", "meni balansim 50 ming", "balans 50000"). Никогда не складывай остатки разных карт, наличных, банковских счетов или валют в один amount. Если для сверки указан конкретный счёт/карта либо несколько счетов или валют, бот не может безопасно выбрать счёт: верни {{"needs_account_selection": true, "transactions": []}}. Не угадывай и не конвертируй валюты.
 - amount: число (сумма). Обязательно число без пробелов.
 - currency: валюта. Если не указана, используй '{default_currency}'
 - category: выбери наиболее подходящую категорию. Для сверки баланса укажи "Сверка". Для остальных: [Еда, Транспорт, Жильё, Одежда, Развлечения, Здоровье, Образование, Работа, Связь, Подарки, Зарплата, Инвестиции, Фриланс, Переводы, Другое]
@@ -53,6 +75,7 @@ class AIParser:
 
 Верни результат СТРОГО в формате JSON:
 {{
+  "needs_account_selection": false,
   "transactions": [
     {{
       "type": "expense",
@@ -64,7 +87,7 @@ class AIParser:
   ]
 }}
 """
-        logger.info(f"Parsing text with AI: {text}")
+        logger.debug("Parsing financial message")
         response = self.client.chat.completions.create(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -76,14 +99,19 @@ class AIParser:
         )
         
         content = response.choices[0].message.content
-        logger.info(f"AI Response: {content}")
         
         if not content:
             raise ValueError("Empty response from LLM")
             
         try:
-            parsed_json = json.loads(content)
-            return ParsedTransactions.model_validate(parsed_json)
+            parsed_json = json.loads(content, parse_float=Decimal)
+            if isinstance(parsed_json, dict) and isinstance(parsed_json.get("transactions"), list):
+                for item in parsed_json["transactions"]:
+                    if isinstance(item, dict) and not item.get("currency"):
+                        item["currency"] = default_currency
+            result = ParsedTransactions.model_validate(parsed_json)
+            logger.debug("Parsed %d financial entries", len(result.transactions))
+            return result
         except (json.JSONDecodeError, ValidationError) as e:
-            logger.error(f"JSON validation error: {e}, content: {content}")
+            logger.error("Financial response validation failed (%s)", type(e).__name__)
             raise

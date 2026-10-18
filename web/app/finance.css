@@ -23,6 +23,7 @@
 .finance-actions>.button { flex:1;justify-content:center;min-height:48px;font-size:14px; }
 .finance-form { display:grid;gap:18px;border-top:1px solid #e5ebe4;padding-top:20px;margin-top:20px; }
 .finance-form h3 { font-size:18px;line-height:1.4;margin:0; }
+.finance-content>.finance-form:first-child { border-top:0;margin-top:0;padding-top:0; }
 .finance-field { display:grid;gap:8px;margin:0 0 16px;min-width:0; }
 .finance-form .finance-field { margin:0; }
 .finance-field>span { font-size:14px;font-weight:600;color:#3e5946;line-height:1.5; }
@@ -85,6 +86,22 @@
 .category-icon-browser .category-icon-grid { margin-top:12px; }
 
 .finance-field textarea { resize:vertical;line-height:1.5; }
+
+.fx-panel { border:1px solid #dfe8df;border-radius:12px;padding:0 14px;margin:12px 0;min-width:0; }
+.fx-panel summary { min-height:48px;display:flex;align-items:center;font-size:14px;font-weight:600;cursor:pointer; }
+.fx-rate-list { display:grid;gap:10px;margin:12px 0 16px; }
+.fx-rate-list>div { display:flex;justify-content:space-between;gap:12px;font-size:14px;line-height:1.6; }
+.fx-rate-list strong { overflow-wrap:anywhere;text-align:right; }
+.fx-source { display:block;color:#63776b;font-size:11px;line-height:1.7;overflow-wrap:anywhere; }
+.fx-source a { color:inherit;text-decoration:underline; }
+.fx-stale,.fx-error { color:#8c5c1b; }
+.fx-error { font-size:12px;line-height:1.6; }
+.fx-valuation { display:grid;gap:5px;margin:12px 0;min-width:0; }
+.fx-valuation>span { font-size:12px; }
+.fx-valuation>strong { font-size:16px;overflow-wrap:anywhere;line-height:1.5; }
+.fx-valuation>p { font-size:12px;line-height:1.6;margin:0; }
+.fx-quote { display:grid;gap:8px;padding:12px;border-radius:10px;background:#f1f6ef; }
+.fx-quote .text-button { min-height:44px;text-align:left;justify-content:flex-start; }
 
 .topbar-controls { display:flex;align-items:center;gap:16px;flex:none; }
 .app-refresh { width:44px;height:44px;flex:none;color:#37624e; }
