@@ -16,6 +16,8 @@ class WebSettings(BaseSettings):
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
             raise ValueError("WEB_PUBLIC_URL must be an http(s) origin without a path")
-        if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1"}:
+        import re
+        is_ip = bool(re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", parsed.hostname or ""))
+        if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1"} and not is_ip:
             raise ValueError("Public deployments require HTTPS")
         return value.rstrip("/")
