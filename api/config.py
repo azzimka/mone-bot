@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class WebSettings(BaseSettings):
     DATABASE_URL: str
     TELEGRAM_BOT_USERNAME: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
     WEB_PUBLIC_URL: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

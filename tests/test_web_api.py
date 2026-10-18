@@ -157,3 +157,27 @@ class WebApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_http_requires_https(self):
         with self.assertRaises(ValueError):
             WebSettings(DATABASE_URL="sqlite+aiosqlite://", WEB_PUBLIC_URL="http://mone.example")
+
+    async def test_webapp_login_valid_and_invalid(self):
+        import hashlib
+        import hmac
+        token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+        self.app.state.bot_token = token
+        auth_ts = int(datetime.now(timezone.utc).timestamp())
+        data_str = f"auth_date={auth_ts}&user=%7B%22id%22%3A999%2C%22first_name%22%3A%22Azim%22%2C%22username%22%3A%22azim_test%22%7D"
+        secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+        data_check = f"auth_date={auth_ts}\nuser={{\"id\":999,\"first_name\":\"Azim\",\"username\":\"azim_test\"}}"
+        valid_hash = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
+
+        # Valid TMA login
+        res = await self.client.post("/api/auth/telegram/webapp", json={"init_data": f"{data_str}&hash={valid_hash}"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["user"]["first_name"], "Azim")
+        self.assertTrue(len(body["token"]) > 20)
+
+        # Invalid TMA login (bad hash)
+        bad_res = await self.client.post("/api/auth/telegram/webapp", json={"init_data": f"{data_str}&hash=badhash123"})
+        self.assertEqual(bad_res.status_code, 401)
+

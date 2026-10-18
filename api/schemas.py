@@ -13,3 +13,10 @@ class TransactionInput(BaseModel):
     description: str = Field(default="", max_length=2000)
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class TelegramWebAppData(BaseModel):
+    init_data: str = Field(min_length=1, max_length=4096)
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+

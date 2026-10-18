@@ -2,10 +2,11 @@ import logging
 from datetime import date, timedelta
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.config import settings
 from bot.database.repositories import UserRepository, CategoryRepository, TransactionRepository, CATEGORY_ICON_MAP
 from bot.models.transaction import Transaction
 from bot.models.csv_import import CsvImport
@@ -26,20 +27,26 @@ WEEKDAY_NAMES = {
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Build the persistent reply keyboard with main action buttons."""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="📊 Расходы за неделю"),
-                KeyboardButton(text="📋 Расходы за сегодня"),
-            ],
-            [
-                KeyboardButton(text="💰 Баланс"),
-                KeyboardButton(text="📅 Расходы за месяц"),
-            ],
-            [
-                KeyboardButton(text="🚌 Автобус / Метро — 2 000 сум"),
-            ],
+    rows = []
+    if settings.WEB_PUBLIC_URL:
+        rows.append([
+            KeyboardButton(text="📱 Открыть приложение", web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)),
+        ])
+    rows.extend([
+        [
+            KeyboardButton(text="📊 Расходы за неделю"),
+            KeyboardButton(text="📋 Расходы за сегодня"),
         ],
+        [
+            KeyboardButton(text="💰 Баланс"),
+            KeyboardButton(text="📅 Расходы за месяц"),
+        ],
+        [
+            KeyboardButton(text="🚌 Автобус / Метро — 2 000 сум"),
+        ],
+    ])
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=rows,
         resize_keyboard=True,
         persistent=True,
     )
@@ -71,11 +78,38 @@ async def cmd_start(message: Message, session: AsyncSession):
         "• «Обед 80000»\n\n"
         "Я запишу трату, и ты всегда сможешь посмотреть статистику. 📊"
     )
+    inline_kb = None
+    if settings.WEB_PUBLIC_URL:
+        inline_kb = InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="🚀 Открыть Mone Mini App", web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)),
+            ]]
+        )
+
     await message.answer(
         welcome_text,
         parse_mode="Markdown",
         reply_markup=get_main_keyboard(),
     )
+    if inline_kb:
+        await message.answer(
+            "📱 Также ты можешь открыть интерактивный финансовый кабинет:",
+            reply_markup=inline_kb,
+        )
+
+
+@router.message(Command("app"))
+async def cmd_app(message: Message):
+    """Open WebApp Mini App."""
+    if not settings.WEB_PUBLIC_URL:
+        await message.answer("Веб-приложение пока не настроено.")
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="🚀 Открыть Mone Mini App", web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)),
+        ]]
+    )
+    await message.answer("Нажми кнопку ниже, чтобы открыть финансовый кабинет прямо в Telegram:", reply_markup=kb)
 
 
 @router.message(Command("help"))

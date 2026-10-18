@@ -40,6 +40,7 @@ async def set_bot_commands(bot: Bot):
     """Set bot commands menu."""
     commands = [
         BotCommand(command="start", description="Запустить/перезапустить бота"),
+        BotCommand(command="app", description="Открыть приложение Mone"),
         BotCommand(command="today", description="Расходы за сегодня"),
         BotCommand(command="week", description="Расходы за неделю"),
         BotCommand(command="month", description="Расходы за месяц"),
@@ -50,7 +51,7 @@ async def set_bot_commands(bot: Bot):
 
 
 async def on_startup(bot: Bot):
-    """Run startup tasks: init DB, seed categories, set bot commands."""
+    """Run startup tasks: init DB, seed categories, set bot commands, set webapp menu button."""
     logger.info("Initializing database...")
     await init_db()
 
@@ -59,6 +60,20 @@ async def on_startup(bot: Bot):
         await session.commit()
 
     await set_bot_commands(bot)
+
+    if settings.WEB_PUBLIC_URL:
+        try:
+            from aiogram.types import MenuButtonWebApp, WebAppInfo
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="📱 Кабинет",
+                    web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL),
+                )
+            )
+            logger.info("Chat menu button set to WebApp: %s", settings.WEB_PUBLIC_URL)
+        except Exception as e:
+            logger.warning("Could not set chat menu button: %s", e)
+
     logger.info("Startup complete.")
 
 

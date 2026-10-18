@@ -141,14 +141,55 @@ export default function Page() {
 
   useEffect(() => {
     const controller = new AbortController();
-    request<Profile>("/me", { signal: controller.signal })
-      .then((profile) => {
+    const tg =
+      typeof window !== "undefined"
+        ? (window as any).Telegram?.WebApp
+        : undefined;
+
+    if (tg) {
+      try {
+        tg.ready();
+        tg.expand();
+      } catch {}
+    }
+
+    const init = async () => {
+      if (tg?.initData) {
+        try {
+          const authRes = await request<{
+            status: string;
+            token: string;
+            user: Profile;
+          }>("/auth/telegram/webapp", {
+            method: "POST",
+            body: JSON.stringify({ init_data: tg.initData }),
+            signal: controller.signal,
+          });
+          if (authRes?.token) {
+            localStorage.setItem("mone_token", authRes.token);
+          }
+          if (authRes?.user) {
+            setUser(authRes.user);
+            setMonth(localDay().slice(0, 7));
+            return;
+          }
+        } catch (e) {
+          console.error("TMA auth error:", e);
+        }
+      }
+
+      try {
+        const profile = await request<Profile>("/me", {
+          signal: controller.signal,
+        });
         setUser(profile);
         setMonth(localDay().slice(0, 7));
-      })
-      .catch(() => {
+      } catch {
         /* Unauthenticated visitors remain in explicitly labelled demo mode. */
-      });
+      }
+    };
+
+    init();
     return () => controller.abort();
   }, []);
 
@@ -254,12 +295,15 @@ export default function Page() {
     const deadline = Date.now() + 300000;
     const poll = async () => {
       try {
-        const result = await request<{ status: string }>(
+        const result = await request<{ status: string; token?: string }>(
           "/auth/telegram/poll",
           { method: "POST" },
         );
         if (!active) return;
         if (result.status === "approved") {
+          if (result.token) {
+            localStorage.setItem("mone_token", result.token);
+          }
           const profile = await request<Profile>("/me");
           if (active) {
             setUser(profile);
@@ -303,6 +347,7 @@ export default function Page() {
 
   const logout = async () => {
     try {
+      localStorage.removeItem("mone_token");
       await request("/auth/logout", { method: "POST" });
       setUser(null);
       setMonth("2026-10");
