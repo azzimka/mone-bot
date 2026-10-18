@@ -9,6 +9,8 @@ import {
 } from "react";
 import { X } from "lucide-react";
 
+import { useLanguage } from "./language-provider";
+
 export function Modal({
   title,
   onClose,
@@ -22,6 +24,7 @@ export function Modal({
   className?: string;
   style?: CSSProperties;
 }) {
+  const { t } = useLanguage();
   const dialog = useRef<HTMLDialogElement>(null);
   const headingId = useId();
   useEffect(() => {
@@ -55,7 +58,7 @@ export function Modal({
             type="button"
             className="icon-button"
             onClick={onClose}
-            aria-label="Oynani yopish"
+            aria-label={t("Oynani yopish")}
           >
             <X size={22} />
           </button>

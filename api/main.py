@@ -20,10 +20,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from api.config import WebSettings
-from api.schemas import TelegramWebAppData, TransactionInput
-from bot.database.repositories import DEFAULT_CATEGORIES, UserRepository
+from api.schemas import CategoryInput, CategoryUpdate, PreferencesInput, TelegramWebAppData, TransactionInput
+from bot.database.repositories import UserRepository
 from bot.database.schema import initialize_schema
-from bot.models import Transaction, User, WebLoginRequest, WebSession
+from bot.models import Category, Transaction, User, WebLoginRequest, WebSession
+from bot.services.categories import category_catalog, validate_category
 from bot.services.web_auth import consume_login, digest, is_expired, request_login
 
 logger = logging.getLogger(__name__)
@@ -72,9 +73,11 @@ def serialize_tx(tx: Transaction) -> dict:
             "date": tx.date.isoformat()}
 
 
-def user_json(user: User) -> dict:
+def user_json(user: User, bot_username: str = "") -> dict:
     return {"first_name": user.first_name or "Mone foydalanuvchisi", "username": user.username,
-            "currency": user.default_currency}
+            "currency": user.default_currency, "language": user.language,
+            "language_url": f"https://t.me/{bot_username.lstrip('@')}?start=language" if bot_username else None,
+            "bot_url": f"https://t.me/{bot_username.lstrip('@')}" if bot_username else None}
 
 
 def period(start: date | None, end: date | None) -> tuple[date, date]:
@@ -176,7 +179,7 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
 
         response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=secure, samesite=cookie_samesite,
                             max_age=30 * 24 * 3600, path="/api")
-        return {"status": "ok", "token": token, "user": user_json(user)}
+        return {"status": "ok", "token": token, "user": user_json(user, config.TELEGRAM_BOT_USERNAME)}
 
     @app.post("/api/auth/telegram/request")
     async def login_request(response: Response, request: Request, session: AsyncSession = Depends(get_session)):
@@ -209,20 +212,79 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
 
     @app.get("/api/me")
     async def me(user: User = Depends(get_user)):
-        return user_json(user)
+        return user_json(user, config.TELEGRAM_BOT_USERNAME)
+
+    @app.patch("/api/preferences")
+    async def preferences(body: PreferencesInput, user: User = Depends(get_user),
+                          session: AsyncSession = Depends(get_session)):
+        if user.language is None:
+            raise HTTPException(409, "Avval botda tilni tanlang")
+        user.language = body.language
+        await session.commit()
+        return user_json(user, config.TELEGRAM_BOT_USERNAME)
 
     @app.post("/api/auth/logout", status_code=204)
     async def logout(request: Request, response: Response, session: AsyncSession = Depends(get_session)):
-        await session.execute(delete(WebSession).where(WebSession.token_hash == digest(request.cookies.get(SESSION_COOKIE, ""))))
+        token = request.cookies.get(SESSION_COOKIE, "")
+        if not token and request.headers.get("Authorization", "").startswith("Bearer "):
+            token = request.headers["Authorization"].removeprefix("Bearer ").strip()
+        await session.execute(delete(WebSession).where(WebSession.token_hash == digest(token)))
         await session.commit()
         response.delete_cookie(SESSION_COOKIE, path="/api")
         response.delete_cookie(LOGIN_COOKIE, path="/api/auth")
 
     @app.get("/api/categories")
     async def categories(user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
-        existing = (await session.execute(select(Transaction.category).where(
-            *ledger_filter(user), Transaction.category.is_not(None)).distinct())).scalars().all()
-        return sorted({name for _, name in DEFAULT_CATEGORIES} | set(existing))
+        return [item["name"] for item in await category_catalog(session, user.id)]
+
+    @app.get("/api/category-settings")
+    async def category_settings(user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
+        return await category_catalog(session, user.id)
+
+    @app.post("/api/categories", status_code=201)
+    async def create_category(body: CategoryInput, user: User = Depends(get_user),
+                              session: AsyncSession = Depends(get_session)):
+        from sqlalchemy.exc import IntegrityError
+        catalog = await category_catalog(session, user.id)
+        try:
+            validate_category(catalog, body.name, body.parent_name)
+        except ValueError as error:
+            raise HTTPException(409, str(error))
+        session.add(Category(name=body.name, icon=body.icon, parent_name=body.parent_name,
+                             user_id=user.id, is_default=False))
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(409, "Bunday kategoriya mavjud.")
+        return {"name": body.name}
+
+    @app.patch("/api/category-settings")
+    async def edit_category(body: CategoryUpdate, user: User = Depends(get_user),
+                            session: AsyncSession = Depends(get_session)):
+        from sqlalchemy.exc import IntegrityError
+        catalog = await category_catalog(session, user.id)
+        if not any(item["name"] == body.key for item in catalog):
+            raise HTTPException(404, "Kategoriya topilmadi.")
+        try:
+            validate_category(catalog, body.name, body.parent_name, body.key)
+        except ValueError as error:
+            raise HTTPException(409, str(error))
+        record = (await session.execute(select(Category).where(
+            Category.user_id == user.id, Category.name == body.key))).scalar_one_or_none()
+        if record is None:
+            record = Category(name=body.key, user_id=user.id, is_default=False)
+            session.add(record)
+        # Presentation changes never rewrite financial history or another account's defaults.
+        record.display_name = body.name if body.name != body.key else None
+        record.icon = body.icon
+        record.parent_name = body.parent_name
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(409, "Bunday kategoriya mavjud.")
+        return await category_catalog(session, user.id)
 
     @app.get("/api/summary")
     async def summary(start: date | None = None, end: date | None = None,

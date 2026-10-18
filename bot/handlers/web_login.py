@@ -9,6 +9,8 @@ from bot.database.repositories import UserRepository
 from bot.models.web_session import WebLoginRequest
 from bot.services.web_auth import approve_login, is_expired
 
+from bot.services.i18n import tr
+
 router = Router()
 
 
@@ -17,17 +19,18 @@ async def start_web_login(message: Message, command: CommandObject, session: Asy
     if message.chat.type != "private":
         return
     request_id = command.args.removeprefix("web_")
+    await show_web_login(message, request_id, session)
+
+
+async def show_web_login(message: Message, request_id: str, session: AsyncSession):
     item = await session.get(WebLoginRequest, request_id)
     if item is None or item.consumed or item.user_id is not None or is_expired(item.expires_at):
-        await message.answer("Kirish havolasi eskirgan. Website’da yangi so‘rov yarating.")
+        await message.answer(tr("Kirish havolasi eskirgan. Website’da yangi so‘rov yarating."))
         return
     await message.answer(
-        f"Mone web kabinetiga kirish\n\nTekshirish kodi: {request_id[:6].upper()}\n\n"
-        "Website’da ham aynan shu kod ko‘rsatilganini tekshiring. "
-        "Faqat kirishni o‘zingiz boshlagan bo‘lsangiz tasdiqlang. "
-        "Tasdiqlash shu brauzerga moliyaviy ma’lumotlaringizni ochadi.",
+        tr("Mone web kabinetiga kirish\n\nTekshirish kodi: {code}\n\nWebsite’da ham aynan shu kod ko‘rsatilganini tekshiring. Faqat kirishni o‘zingiz boshlagan bo‘lsangiz tasdiqlang. Tasdiqlash shu brauzerga moliyaviy ma’lumotlaringizni ochadi.", code=request_id[:6].upper()),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="Kirishni tasdiqlash", callback_data=f"web_login:{request_id}")
+            InlineKeyboardButton(text=tr("Kirishni tasdiqlash"), callback_data=f"web_login:{request_id}")
         ]]),
     )
 
@@ -44,5 +47,5 @@ async def confirm_web_login(callback: CallbackQuery, session: AsyncSession):
                                              callback.from_user.username, callback.from_user.first_name)
     approved = await approve_login(session, request_id, user.id)
     await session.commit()
-    await callback.message.edit_text("Kirish tasdiqlandi. Website’ga qayting." if approved
-                                    else "Bu so‘rov eskirgan yoki avval tasdiqlangan.")
+    await callback.message.edit_text(tr("Kirish tasdiqlandi. Website’ga qayting." if approved
+                                    else "Bu so‘rov eskirgan yoki avval tasdiqlangan."))

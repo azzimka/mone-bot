@@ -9,6 +9,7 @@ from typing import Callable, Dict, Any, Awaitable
 from bot.config import settings
 from bot.database.engine import async_session_maker, init_db
 from bot.database.repositories import CategoryRepository
+from bot.handlers.language import LanguageMiddleware, router as language_router
 from bot.handlers import commands, voice, text, callbacks, balance, csv_import, web_login
 
 logger = logging.getLogger(__name__)
@@ -39,13 +40,11 @@ class DbSessionMiddleware(BaseMiddleware):
 async def set_bot_commands(bot: Bot):
     """Set bot commands menu."""
     commands = [
-        BotCommand(command="start", description="Запустить/перезапустить бота"),
-        BotCommand(command="app", description="Открыть приложение Mone"),
-        BotCommand(command="today", description="Расходы за сегодня"),
-        BotCommand(command="week", description="Расходы за неделю"),
-        BotCommand(command="month", description="Расходы за месяц"),
-        BotCommand(command="import", description="Импорт расходов и доходов из CSV"),
-        BotCommand(command="reset", description="Удалить все данные (сброс)"),
+        BotCommand(command="app", description="📱 Ilova / Приложение"),
+        BotCommand(command="today", description="📋 Bugun / Сегодня"),
+        BotCommand(command="import", description="📥 CSV import"),
+        BotCommand(command="settings", description="⚙️ Sozlamalar / Настройки"),
+        BotCommand(command="help", description="❓ Yordam / Помощь"),
     ]
     await bot.set_my_commands(commands)
 
@@ -90,7 +89,11 @@ async def main():
     # Register Middlewares
     dp.update.middleware(DbSessionMiddleware(async_session_maker))
 
+    dp.message.outer_middleware(LanguageMiddleware())
+    dp.callback_query.outer_middleware(LanguageMiddleware())
+
     # Include routers — balance must come before text to avoid FSM state conflicts
+    dp.include_router(language_router)
     dp.include_router(web_login.router)
     dp.include_router(csv_import.router)
     dp.include_router(commands.router)

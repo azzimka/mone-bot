@@ -1,3 +1,4 @@
+from bot.services.i18n import tr, button_variants
 """Strict CSV validation and local categorization; no financial data sent to AI."""
 
 import csv
@@ -66,7 +67,7 @@ CATEGORY_ALIASES = dict(zip(
 def categorize(category: str, description: str) -> str:
     if category:
         if len(category) > 100:
-            raise CsvImportError("Категория длиннее 100 символов.")
+            raise CsvImportError(tr('Категория длиннее 100 символов.'))
         return CATEGORY_NAMES.get(normalize(category), CATEGORY_ALIASES.get(normalize(category), category))
     for name, pattern in CATEGORY_RULES:
         if re.search(rf"\b(?:{pattern})\b", description.casefold()):
@@ -98,20 +99,20 @@ class CsvPreview:
 def parse_amount(value: str) -> Decimal:
     value = re.sub(r"[\s\u00a0\u202f]", "", value)
     if not value or len(value) > 40:
-        raise CsvImportError("Не указана корректная сумма.")
+        raise CsvImportError(tr('Не указана корректная сумма.'))
     # Comma is a decimal separator; use spaces for thousands. Reject ambiguity.
     if "," in value:
         if "." in value or value.count(",") != 1 or len(value.rsplit(",", 1)[1]) > 2:
-            raise CsvImportError("Неоднозначная сумма: используйте 1 234,56 или 1234.56.")
+            raise CsvImportError(tr('Неоднозначная сумма: используйте 1 234,56 или 1234.56.'))
         value = value.replace(",", ".")
     if not re.fullmatch(r"[+-]?\d+(?:\.\d{1,2})?", value):
-        raise CsvImportError("Сумма должна быть числом с максимум двумя знаками после запятой.")
+        raise CsvImportError(tr('Сумма должна быть числом с максимум двумя знаками после запятой.'))
     try:
         amount = Decimal(value)
     except InvalidOperation as exc:
-        raise CsvImportError("Некорректная сумма.") from exc
+        raise CsvImportError(tr('Некорректная сумма.')) from exc
     if not amount.is_finite() or abs(amount) > MAX_AMOUNT:
-        raise CsvImportError("Сумма выходит за допустимый диапазон.")
+        raise CsvImportError(tr('Сумма выходит за допустимый диапазон.'))
     return amount
 
 
@@ -121,12 +122,12 @@ def parse_date(value: str) -> date:
             return datetime.strptime(value, fmt).date()
         except ValueError:
             pass
-    raise CsvImportError("Дата должна быть YYYY-MM-DD или DD.MM.YYYY.")
+    raise CsvImportError(tr('Дата должна быть YYYY-MM-DD или DD.MM.YYYY.'))
 
 
 def parse_csv(data: bytes, default_currency: str = "UZS") -> CsvPreview:
     if not data or len(data) > MAX_FILE_BYTES:
-        raise CsvImportError("Отправьте непустой CSV размером до 1 МБ.")
+        raise CsvImportError(tr('Отправьте непустой CSV размером до 1 МБ.'))
     source = None
     for encoding in ("utf-8-sig", "cp1251"):
         try:
@@ -135,9 +136,9 @@ def parse_csv(data: bytes, default_currency: str = "UZS") -> CsvPreview:
         except UnicodeDecodeError:
             pass
     if source is None or "\x00" in source:
-        raise CsvImportError("Нужен текстовый CSV в UTF-8 или Windows-1251.")
+        raise CsvImportError(tr('Нужен текстовый CSV в UTF-8 или Windows-1251.'))
     if len(source.splitlines()) > MAX_ROWS * 10:
-        raise CsvImportError(f"Слишком много строк. Максимум {MAX_ROWS} операций.")
+        raise CsvImportError(tr('Слишком много строк. Максимум {p1} операций.' ,p1=f'{MAX_ROWS}'))
     first_line = next((line for line in source.splitlines() if line.strip()), "")
     try:
         dialect = csv.Sniffer().sniff(first_line, delimiters=",;\t")
@@ -148,12 +149,11 @@ def parse_csv(data: bytes, default_currency: str = "UZS") -> CsvPreview:
             field = HEADER_MAP.get(normalize(header))
             if field:
                 if field in mapping:
-                    raise CsvImportError(f"Повторяющийся столбец: {field}.")
+                    raise CsvImportError(tr('Повторяющийся столбец: {p1}.' ,p1=f'{field}'))
                 mapping[field] = index
         split_amounts = "amount" not in mapping and {"income", "expense"} <= mapping.keys()
         if "date" not in mapping or ("amount" not in mapping and not split_amounts):
-            raise CsvImportError("Нужны столбцы date / дата / sana и amount / сумма / summa "
-                                 "(или отдельные income / expense, kirim / chiqim). Пример: /import.")
+            raise CsvImportError(tr('Нужны столбцы date / дата / sana и amount / сумма / summa (или отдельные income / expense, kirim / chiqim). Пример: /import.'))
         transactions = []
         errors = []
         inferred_types = not split_amounts and "type" not in mapping
@@ -161,10 +161,10 @@ def parse_csv(data: bytes, default_currency: str = "UZS") -> CsvPreview:
             if not any(v.strip() for v in values):
                 continue
             if len(transactions) + len(errors) >= MAX_ROWS:
-                raise CsvImportError(f"Максимум {MAX_ROWS} операций в одном файле.")
+                raise CsvImportError(tr('Максимум {p1} операций в одном файле.' ,p1=f'{MAX_ROWS}'))
             try:
                 if len(values) != len(headers):
-                    raise CsvImportError("Число столбцов не совпадает с заголовком.")
+                    raise CsvImportError(tr('Число столбцов не совпадает с заголовком.'))
                 def get(field):
                     return values[mapping[field]].strip() if field in mapping else ""
                 tx_date = parse_date(get("date"))
@@ -172,7 +172,7 @@ def parse_csv(data: bytes, default_currency: str = "UZS") -> CsvPreview:
                     income = parse_amount(get("income") or "0")
                     expense = parse_amount(get("expense") or "0")
                     if income < 0 or expense < 0 or (income > 0) == (expense > 0):
-                        raise CsvImportError("Укажите положительную сумму только в одном из столбцов income / expense.")
+                        raise CsvImportError(tr('Укажите положительную сумму только в одном из столбцов income / expense.'))
                     tx_type, amount = ("income", income) if income else ("expense", expense)
                 else:
                     amount = parse_amount(get("amount"))
@@ -180,33 +180,33 @@ def parse_csv(data: bytes, default_currency: str = "UZS") -> CsvPreview:
                     if "type" in mapping:
                         tx_type = TYPE_MAP.get(normalize(raw_type))
                         if tx_type is None:
-                            raise CsvImportError("Тип: income / expense, kirim / chiqim или доход / расход.")
+                            raise CsvImportError(tr('Тип: income / expense, kirim / chiqim или доход / расход.'))
                         if tx_type == "income" and amount < 0:
-                            raise CsvImportError("Отрицательная сумма противоречит типу income.")
+                            raise CsvImportError(tr('Отрицательная сумма противоречит типу income.'))
                     else:
                         tx_type = "expense" if amount < 0 else "income"
                     amount = abs(amount)
                 if amount == 0:
-                    raise CsvImportError("Нулевая сумма не является операцией.")
+                    raise CsvImportError(tr('Нулевая сумма не является операцией.'))
                 currency = (get("currency") or default_currency).upper()
                 # Existing bot reports sum one currency. Never silently mix imported currencies.
                 if currency != default_currency.upper():
-                    raise CsvImportError(f"Бот ведёт учёт в {default_currency}; сначала конвертируйте эту операцию.")
+                    raise CsvImportError(tr('Бот ведёт учёт в {p1}; сначала конвертируйте эту операцию.' ,p1=f'{default_currency}'))
                 description = get("description")
                 if len(description) > 2000:
-                    raise CsvImportError("Описание длиннее 2000 символов.")
+                    raise CsvImportError(tr('Описание длиннее 2000 символов.'))
                 category = categorize(get("category"), description)
                 transactions.append(CsvTransaction(tx_date, tx_type, amount, currency, category, description))
             except CsvImportError as exc:
-                errors.append(f"Строка {reader.line_num}: {exc}")
+                errors.append(tr('Строка {p1}: {p3}' ,p1=f'{reader.line_num}', p3=f'{exc}'))
         if errors:
-            raise CsvImportError("Ничего не импортировано. Исправьте CSV:\n" + "\n".join(errors[:5])
-                                 + (f"\nВсего строк с ошибками: {len(errors)}." if len(errors) > 5 else ""))
+            raise CsvImportError(tr('Ничего не импортировано. Исправьте CSV:\n') + "\n".join(errors[:5])
+                                 + (tr('\nВсего строк с ошибками: {p1}.' ,p1=f'{len(errors)}') if len(errors) > 5 else ""))
         if not transactions:
-            raise CsvImportError("В файле нет операций.")
+            raise CsvImportError(tr('В файле нет операций.'))
         return CsvPreview(source, transactions, inferred_types)
     except (csv.Error, StopIteration) as exc:
-        raise CsvImportError("Не удалось прочитать CSV. Разделитель: запятая, точка с запятой или табуляция.") from exc
+        raise CsvImportError(tr('Не удалось прочитать CSV. Разделитель: запятая, точка с запятой или табуляция.')) from exc
 
 
 def format_preview(preview: CsvPreview) -> str:
@@ -217,19 +217,19 @@ def format_preview(preview: CsvPreview) -> str:
     categories = {}
     for tx in txs:
         categories[tx.category] = categories.get(tx.category, 0) + 1
-    lines = [f"CSV: {len(txs)} операций", f"Период: {min(t.date for t in txs)} — {max(t.date for t in txs)}",
-             f"Кирим / Доход: {totals['income']:,.2f} {currency}",
-             f"Чиқим / Расход: {totals['expense']:,.2f} {currency}", "", "Категории (число операций):"]
+    lines = [tr('CSV: {p1} операций' ,p1=f'{len(txs)}'), tr('Период: {p1} — {p3}' ,p1=f'{min((t.date for t in txs))}', p3=f'{max((t.date for t in txs))}'),
+             tr('Кирим / Доход: {p1} {p3}' ,p1=f"{totals['income']:,.2f}", p3=f'{currency}'),
+             tr('Чиқим / Расход: {p1} {p3}' ,p1=f"{totals['expense']:,.2f}", p3=f'{currency}'), "", tr('Категории (число операций):')]
     for category, count in sorted(categories.items(), key=lambda item: -item[1])[:10]:
         lines.append(f"• {category[:80]}: {count}")
     if len(categories) > 10:
-        lines.append(f"…ещё {len(categories) - 10} категорий.")
-    lines.extend(["", "Первые операции:"])
+        lines.append(tr('…ещё {p1} категорий.' ,p1=f'{len(categories) - 10}'))
+    lines.extend(["", tr('Первые операции:')])
     for tx in txs[:5]:
         sign = "+" if tx.type == "income" else "−"
         lines.append(f"{tx.date}: {sign}{tx.amount} {tx.currency} · {tx.category[:60]} · {tx.description[:80]}")
     if preview.inferred_types:
-        lines.extend(["", "Внимание: столбца type нет. Положительные суммы — доход, отрицательные — расход."])
-    lines.extend(["", "Категории из файла сохранены; пустые определены по описанию, неизвестные — «Другое».",
-                  "Проверьте суммы, типы и категории перед импортом. Подтверждение действует 24 часа."])
+        lines.extend(["", tr('Внимание: столбца type нет. Положительные суммы — доход, отрицательные — расход.')])
+    lines.extend(["", tr('Категории из файла сохранены; пустые определены по описанию, неизвестные — «Другое».'),
+                  tr('Проверьте суммы, типы и категории перед импортом. Подтверждение действует 24 часа.')])
     return "\n".join(lines)

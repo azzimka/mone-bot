@@ -14,7 +14,8 @@ PostgreSQL bazasidan foydalanadi. Hisob-kitoblar serverda `Decimal` orqali bajar
 - Telegram botda tasdiqlash orqali kirish; HttpOnly sessiya cookie’lari.
 - Kirilgan hisob ma’lumotlari 30 soniyada va oynaga qaytilganda yangilanadi.
 - Asosiy valyuta bo‘yicha hisob. Begona valyutalar umumiy summaga qo‘shilmaydi.
-- O‘zbekcha, mobilga mos interfeys. Sintetik namuna rejimi haqiqiy hisobdan ajratilgan.
+- O‘zbekcha va ruscha interfeys; til tanlovi brauzerda saqlanadi. Sana, summa, kategoriyalar va tizim xabarlari tanlangan tilda ko‘rsatiladi. Foydalanuvchining izohlari o‘zgarmaydi.
+- Mobilga mos interfeys. Sintetik namuna rejimi haqiqiy hisobdan ajratilgan.
 
 Hozir alohida karta hisoblari, budjetlar, jamg‘arma maqsadlari va website’dan CSV
 import yo‘q. CSV import botdagi `/import` orqali ishlaydi. Balans botning mavjud
@@ -84,3 +85,23 @@ yaratib, o‘zlari tozalaydi. Shu o‘zgaruvchi berilmasa, ular o‘tkazib yubor
 
 Browser testida haqiqiy hisobga ulanmasdan namuna rejimini ishlating. End-to-end
 Telegram tekshiruvi alohida test bot va test bazasi bilan bajarilishi kerak.
+
+## Home Screen / PWA icons
+
+`public/manifest.webmanifest` and the Next.js metadata in `app/layout.tsx` define
+Mone's app name, standalone display, theme, favicons and Apple Touch Icon.
+All icons come from the existing root `logo.png`; no branding was replaced.
+The small favicons use only its symbol. To regenerate: `npm run icons` (uses
+Sharp already supplied by Next.js), then `npm run build`.
+
+On iPhone, open the HTTPS website in **Safari → Share → Add to Home Screen**.
+Keep the name **Mone**, enable **Open as Web App** if offered, and tap **Add**.
+Launch from the new Home Screen icon: the Mone logo should appear and the app
+should open without Safari's address bar. Remove any older gray shortcut and
+add it again if iOS keeps a cached icon. On Android Chrome, use **Install app**
+or **Add to Home screen**, then launch from the installed icon.
+
+The manifest and icons must return 200 without authentication, including
+`/apple-touch-icon.png`, `/icons/icon-192.png`, `/icons/icon-512.png`,
+`/icons/maskable-512.png` and `/favicon.ico`. Icons do not add offline support;
+financial data still requires the existing backend connection.

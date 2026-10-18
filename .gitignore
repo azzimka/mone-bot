@@ -38,3 +38,7 @@ web/.env.local
 
 # Alembic
 alembic/versions/__pycache__/
+
+# Database backups (never publish financial data)
+backups/
+*.dump

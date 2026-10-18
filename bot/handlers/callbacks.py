@@ -1,3 +1,4 @@
+from bot.services.i18n import category_label, tr, button_variants
 import logging
 from datetime import date, datetime, timedelta
 from aiogram import Router, F
@@ -23,7 +24,7 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
 
     pending_data = pending_transactions.get(tx_id)
     if not pending_data:
-        await callback.message.edit_text("❌ Данная операция уже обработана или устарела.")
+        await callback.message.edit_text(tr('❌ Данная операция уже обработана или устарела.'))
         await callback.answer()
         return
 
@@ -66,7 +67,7 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
                 voice_text=voice_text,
                 date=date.today(),
             )
-            diff_str = f"+{diff_fmt} {currency} (доход)"
+            diff_str = tr('+{p1} {p3} (доход)' ,p1=f'{diff_fmt}', p3=f'{currency}')
         elif diff < 0:
             abs_diff = abs(diff)
             abs_diff_fmt = f"{float(abs_diff):,.0f}".replace(",", " ")
@@ -81,22 +82,19 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
                 voice_text=voice_text,
                 date=date.today(),
             )
-            diff_str = f"-{abs_diff_fmt} {currency} (расход)"
+            diff_str = tr('-{p1} {p3} (расход)' ,p1=f'{abs_diff_fmt}', p3=f'{currency}')
         else:
-            diff_str = "0 UZS (совпадает)"
+            diff_str = tr('0 UZS (совпадает)')
 
         curr_fmt = f"{float(current_balance):,.0f}".replace(",", " ")
         target_fmt = f"{float(target_amount):,.0f}".replace(",", " ")
 
         success_text = (
-            f"⚖️ *Баланс синхронизирован!*\n\n"
-            f"├ Было в боте:  `{curr_fmt} {currency}`\n"
-            f"├ Корректировка: `{diff_str}`\n"
-            f"└ Фактический:   *{target_fmt} {currency}* 🟢"
+            tr('⚖️ *Баланс синхронизирован!*\n\n├ Было в боте:  `{p1} {p3}`\n├ Корректировка: `{p5}`\n└ Фактический:   *{p7} {p9}* 🟢' ,p1=f'{curr_fmt}', p3=f'{currency}', p5=f'{diff_str}', p7=f'{target_fmt}', p9=f'{currency}')
         )
         await callback.message.edit_text(success_text, parse_mode="Markdown")
         del pending_transactions[tx_id]
-        await callback.answer("⚖️ Баланс сверен!")
+        await callback.answer(tr('⚖️ Баланс сверен!'))
         return
 
     # Save to database
@@ -114,18 +112,12 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
 
     # Format success message
     type_emoji = "📥" if tx_dict["type"] == "income" else "📤"
-    type_str = "Доход" if tx_dict["type"] == "income" else "Расход"
+    type_str = tr('Доход') if tx_dict["type"] == "income" else tr('Расход')
     amount = tx_dict["amount"]
     currency = tx_dict.get("currency", "UZS")
     amount_str = f"{amount:,.0f}".replace(",", " ")
 
-    success_text = (
-        f"✅ *Записано!*\n"
-        f"{type_emoji} Тип: {type_str}\n"
-        f"💰 Сумма: {amount_str} {currency}\n"
-        f"📂 Категория: {tx_dict.get('category', 'Другое')}\n"
-        f"📝 Описание: {tx_dict.get('description', '-')}"
-    )
+    success_text = f"✅ {type_str}: {amount_str} {currency}\n📂 {category_label(tx_dict.get('category', 'Другое'))}"
 
     # For expenses: show remaining balance
     if tx_dict["type"] == "expense":
@@ -145,13 +137,13 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
         # Only show balance if user has set it up (income > 0)
         if float(income_total) > 0:
             balance_str = f"{balance:,.0f}".replace(",", " ")
-            success_text += f"\n\n💵 Остаток: *{balance_str} {currency}*"
+            success_text += tr('\n\n💵 Остаток: *{p1} {p3}*' ,p1=f'{balance_str}', p3=f'{currency}')
 
     await callback.message.edit_text(success_text, parse_mode="Markdown")
 
     # Clean up
     del pending_transactions[tx_id]
-    await callback.answer("✅ Успешно сохранено!")
+    await callback.answer(tr('✅ Успешно сохранено!'))
 
 
 @router.callback_query(F.data.startswith("cancel:"))
@@ -162,5 +154,5 @@ async def on_cancel_transaction(callback: CallbackQuery):
     if tx_id in pending_transactions:
         del pending_transactions[tx_id]
 
-    await callback.message.edit_text("❌ Операция отменена.")
-    await callback.answer("Отменено")
+    await callback.message.edit_text(tr('❌ Операция отменена.'))
+    await callback.answer(tr('Отменено'))

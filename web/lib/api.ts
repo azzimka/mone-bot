@@ -6,8 +6,13 @@ export type Entry = {
   currency: string;
   category: string;
   description: string;
+  /** Only synthetic preview descriptions have translation keys. */
+  demoDescription?: string;
 };
 export type Profile = {
+  language: "uz" | "ru" | null;
+  language_url: string | null;
+  bot_url: string | null;
   first_name: string;
   username: string | null;
   currency: string;
@@ -151,7 +156,7 @@ export function demoEntries(): Entry[] {
     ["Подарки", "Tug‘ilgan kun sovg‘asi", 180000],
     ["Транспорт", "Yandex Go", 26000],
   ] as const;
-  return [
+  const entries: Entry[] = [
     {
       id: 1,
       date: "2026-10-01",
@@ -180,6 +185,10 @@ export function demoEntries(): Entry[] {
       description,
     })),
   ];
+  return entries.map((entry) => ({
+    ...entry,
+    demoDescription: entry.description,
+  }));
 }
 
 export function summarize(

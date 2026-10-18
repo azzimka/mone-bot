@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from api.config import WebSettings
 from api.main import create_app
+from bot.database.repositories import UserRepository
 from bot.models import Base, Transaction, User, WebLoginRequest, WebSession
 from bot.services.web_auth import approve_login, digest
 
@@ -59,6 +60,130 @@ class WebApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.json()["first_name"], "Mirzo")
         self.assertEqual(result.headers["cache-control"], "no-store")
 
+    async def test_language_is_shared_by_account_across_browsers(self):
+        self.assertIsNone((await self.client.get("/api/me")).json()["language"])
+        async with self.pool.begin() as session:
+            await UserRepository.set_language(session, 111, "ru")
+            await UserRepository.set_language(session, 222, "uz")
+        async with AsyncClient(transport=ASGITransport(app=self.app), base_url=ORIGIN, cookies={"mone_session": "test-session"}) as second_browser:
+            profile = (await second_browser.get("/api/me")).json()
+            self.assertEqual(profile["language"], "ru")
+            self.assertEqual(profile["language_url"], "https://t.me/mone_test_bot?start=language")
+        async with self.pool.begin() as session:
+            await UserRepository.get_or_create(session, 111, "updated_username", "Mirzo")
+        self.assertEqual((await self.client.get("/api/me")).json()["language"], "ru")
+        self.assertEqual((await self.client.patch("/api/me", json={"language": "uz"})).status_code, 405)
+        self.assertEqual((await self.client.get("/api/me")).json()["language"], "ru")
+
+    async def test_preferences_require_bot_onboarding_and_only_change_current_user(self):
+        self.assertEqual((await self.client.patch("/api/preferences", json={"language": "ru"})).status_code, 409)
+        async with self.pool.begin() as session:
+            await UserRepository.set_language(session, 111, "uz")
+            await UserRepository.set_language(session, 222, "uz")
+        saved = await self.client.patch("/api/preferences", json={"language": "ru"})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["language"], "ru")
+        for payload in ({"language": "en"}, {"language": "uz", "user_id": self.other_id}):
+            self.assertEqual((await self.client.patch("/api/preferences", json=payload)).status_code, 422)
+        self.assertEqual((await self.client.patch("/api/preferences", json={"language": "uz"}, headers={"Origin": "https://attacker.example"})).status_code, 403)
+        async with self.pool() as session:
+            user = await session.get(User, self.other_id)
+            self.assertEqual(user.language, "uz")
+        self.assertEqual((await self.client.get("/api/me")).json()["language"], "ru")
+        self.client.cookies.clear()
+        self.assertEqual((await self.client.patch("/api/preferences", json={"language": "uz"})).status_code, 401)
+
+    async def test_custom_categories_are_private_and_available_before_first_transaction(self):
+        result = await self.client.post("/api/categories", json={"name": "  Sport  "})
+        self.assertEqual(result.status_code, 201)
+        self.assertEqual(result.json()["name"], "Sport")
+        self.assertIn("Sport", (await self.client.get("/api/categories")).json())
+        for name in ("sport", "Ｓｐｏｒｔ", "Еда", "Oziq-ovqat"):
+            self.assertEqual((await self.client.post("/api/categories", json={"name": name})).status_code, 409, name)
+        for payload in ({"name": " "}, {"name": "x" * 101}, {"name": "Hidden", "user_id": self.other_id}):
+            self.assertEqual((await self.client.post("/api/categories", json=payload)).status_code, 422)
+        async with self.pool.begin() as session:
+            session.add(WebSession(token_hash=digest("other-session"), user_id=self.other_id,
+                                   expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+        async with AsyncClient(transport=ASGITransport(app=self.app), base_url=ORIGIN,
+                               headers={"Origin": ORIGIN}, cookies={"mone_session": "other-session"}) as other:
+            self.assertNotIn("Sport", (await other.get("/api/categories")).json())
+            self.assertEqual((await other.post("/api/categories", json={"name": "Sport"})).status_code, 201)
+        self.client.cookies.clear()
+        self.assertEqual((await self.client.post("/api/categories", json={"name": "Private"})).status_code, 401)
+
+    async def test_category_icons_and_subcategories_are_durable(self):
+        response = await self.client.post("/api/categories", json={"name": "Sport", "icon": "sport"})
+        self.assertEqual(response.status_code, 201)
+        response = await self.client.post("/api/categories", json={"name": "Gym", "icon": "heart", "parent_name": "Sport"})
+        self.assertEqual(response.status_code, 201)
+        catalog = (await self.client.get("/api/category-settings")).json()
+        child = next(item for item in catalog if item["name"] == "Gym")
+        self.assertEqual(child["icon"], "heart")
+        self.assertEqual(child["parent_name"], "Sport")
+        saved = await self.client.patch("/api/category-settings", json={"key": "Sport", "name": "Fitness", "icon": "sport"})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(next(item for item in saved.json() if item["name"] == "Sport")["display_name"], "Fitness")
+        self.assertEqual(next(item for item in saved.json() if item["name"] == "Gym")["parent_name"], "Sport")
+        self.assertIn("Gym", (await self.client.get("/api/categories")).json())
+        async with AsyncClient(transport=ASGITransport(app=self.app), base_url=ORIGIN,
+                               cookies={"mone_session": "test-session"}) as another_browser:
+            self.assertEqual((await another_browser.get("/api/category-settings")).json(), saved.json())
+
+    async def test_default_category_edit_is_private_and_preserves_ledger(self):
+        changed = await self.client.patch("/api/category-settings", json={"key": "Еда", "name": "Meals", "icon": "coffee"})
+        self.assertEqual(changed.status_code, 200)
+        category = next(item for item in changed.json() if item["name"] == "Еда")
+        self.assertEqual(category["display_name"], "Meals")
+        async with self.pool() as session:
+            self.assertEqual((await session.get(Transaction, self.own_tx)).category, "Еда")
+            self.assertEqual((await session.get(Transaction, self.own_tx)).amount, Decimal("25.25"))
+        await self.client.post("/api/categories", json={"name": "Private"})
+        async with self.pool.begin() as session:
+            session.add(WebSession(token_hash=digest("other-session"), user_id=self.other_id,
+                                   expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+        async with AsyncClient(transport=ASGITransport(app=self.app), base_url=ORIGIN,
+                               headers={"Origin": ORIGIN}, cookies={"mone_session": "other-session"}) as other:
+            category = next(item for item in (await other.get("/api/category-settings")).json() if item["name"] == "Еда")
+            self.assertIsNone(category["display_name"])
+            self.assertIsNone(category["icon"])
+            self.assertEqual((await other.patch("/api/category-settings", json={"key": "Private", "name": "X"})).status_code, 404)
+        summary = (await self.client.get("/api/summary?start=2026-10-01&end=2026-10-31")).json()
+        self.assertEqual(Decimal(summary["expense"]), Decimal("25.25"))
+        self.assertEqual(Decimal(summary["balance"]), Decimal("975.25"))
+
+    async def test_category_tree_rejects_cycles_nested_children_and_duplicate_labels(self):
+        await self.client.post("/api/categories", json={"name": "Sport"})
+        await self.client.post("/api/categories", json={"name": "Gym", "parent_name": "Sport"})
+        for payload in (
+            {"name": "Unknown parent", "parent_name": "Private"},
+            {"name": "Third level", "parent_name": "Gym"},
+        ):
+            self.assertEqual((await self.client.post("/api/categories", json=payload)).status_code, 409)
+        for payload in (
+            {"key": "Sport", "name": "Sport", "parent_name": "Gym"},
+            {"key": "Sport", "name": "Sport", "parent_name": "Sport"},
+            {"key": "Sport", "name": "Sport", "parent_name": "Еда"},
+            {"key": "Gym", "name": "Oziq-ovqat"},
+        ):
+            self.assertEqual((await self.client.patch("/api/category-settings", json=payload)).status_code, 409)
+        saved = await self.client.patch("/api/category-settings", json={"key": "Sport", "name": "Fitness"})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual((await self.client.post("/api/categories", json={"name": "Ｆｉｔｎｅｓｓ"})).status_code, 409)
+        for payload in ({"name": "A", "icon": "https://example.com/x.svg"}, {"name": "B", "icon": "<svg>"}, {"name": "C", "parent_name": " "}):
+            self.assertEqual((await self.client.post("/api/categories", json=payload)).status_code, 422)
+        self.assertEqual((await self.client.patch("/api/category-settings", json={"key": "Еда", "name": "X"}, headers={"Origin": "https://attacker.example"})).status_code, 403)
+        self.client.cookies.clear()
+        self.assertEqual((await self.client.get("/api/category-settings")).status_code, 401)
+        self.assertEqual((await self.client.patch("/api/category-settings", json={"key": "Еда", "name": "X"})).status_code, 401)
+
+    async def test_bearer_logout_revokes_the_actual_session(self):
+        self.client.cookies.clear()
+        headers = {"Authorization": "Bearer test-session"}
+        self.assertEqual((await self.client.get("/api/me", headers=headers)).status_code, 200)
+        self.assertEqual((await self.client.post("/api/auth/logout", headers=headers)).status_code, 204)
+        self.assertEqual((await self.client.get("/api/me", headers=headers)).status_code, 401)
+
     async def test_anonymous_cannot_read_ledger(self):
         self.client.cookies.clear()
         for path in ("/api/me", "/api/summary", "/api/transactions", "/api/categories"):
@@ -70,6 +195,24 @@ class WebApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Decimal(result["expense"]), Decimal("25.25"))
         self.assertEqual(Decimal(result["balance"]), Decimal("975.25"))
         self.assertEqual(result["count"], 2)
+
+    async def test_custom_interval_includes_boundaries_and_preserves_all_time_balance(self):
+        for start, end, income, expense, count in (
+            ("2026-10-01", "2026-10-01", "1000.50", "0", 1),
+            ("2026-10-02", "2026-10-02", "0", "25.25", 1),
+            ("2026-09-30", "2026-10-02", "1000.50", "25.25", 2),
+            ("2026-10-03", "2026-10-18", "0", "0", 0),
+        ):
+            query = f"start={start}&end={end}"
+            result = (await self.client.get(f"/api/summary?{query}")).json()
+            self.assertEqual(Decimal(result["income"]), Decimal(income))
+            self.assertEqual(Decimal(result["expense"]), Decimal(expense))
+            self.assertEqual(result["count"], count)
+            self.assertEqual(Decimal(result["balance"]), Decimal("975.25"))
+            transactions = (await self.client.get(f"/api/transactions?{query}")).json()
+            self.assertEqual(transactions["total"], count)
+            for entry in transactions["items"]:
+                self.assertTrue(start <= entry["date"] <= end)
 
     async def test_filters_and_literal_search(self):
         result = (await self.client.get("/api/transactions?start=2026-10-01&end=2026-10-31&kind=expense&search=100%25")).json()

@@ -22,6 +22,8 @@ class Category(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     icon: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    parent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),

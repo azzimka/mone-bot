@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import Base
@@ -16,6 +16,7 @@ class User(Base):
     """Database model representing a Telegram user."""
 
     __tablename__ = "users"
+    __table_args__ = (CheckConstraint("language IN ('uz', 'ru')", name="ck_users_language"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(
@@ -26,6 +27,8 @@ class User(Base):
     )
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # NULL means the user has not explicitly chosen a language in the bot yet.
+    language: Mapped[Optional[str]] = mapped_column(String(2), nullable=True)
     default_currency: Mapped[str] = mapped_column(
         String(10),
         default="UZS",

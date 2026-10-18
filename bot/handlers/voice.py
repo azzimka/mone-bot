@@ -1,3 +1,4 @@
+from bot.services.i18n import tr, button_variants
 import os
 import uuid
 import logging
@@ -48,7 +49,7 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
         try:
             transcribed_text = await speech_service.transcribe(temp_path)
             if not transcribed_text or transcribed_text.startswith("К сожалению"):
-                await message.reply("⚠️ Не удалось распознать голосовое сообщение. Попробуйте ещё раз или напишите текстом.")
+                await message.reply(tr('⚠️ Не удалось распознать голосовое сообщение. Попробуйте ещё раз или напишите текстом.'))
                 return
         finally:
             # Clean up the temp file
@@ -56,13 +57,13 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
                 os.remove(temp_path)
 
         # Show transcribed text ONCE as a clean header
-        await message.reply(f'🎤 *Распознано:* _{transcribed_text}_', parse_mode="Markdown")
+        await message.reply(tr('🎤 *Распознано:* _{p1}_' ,p1=f'{transcribed_text}'), parse_mode="Markdown")
 
         # 3. Parse with AIParser
         parsed_result = await ai_parser.parse(transcribed_text, settings.DEFAULT_CURRENCY)
 
         if not parsed_result or not parsed_result.transactions:
-            await message.answer("⚠️ Не удалось распознать финансовые операции в тексте. Попробуйте сказать точнее, например: «Кофе 25 тысяч».")
+            await message.answer(tr('⚠️ Не удалось распознать финансовые операции в тексте. Попробуйте сказать точнее, например: «Кофе 25 тысяч».'))
             return
 
         total_txs = len(parsed_result.transactions)
@@ -80,13 +81,13 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
 
             # Create inline keyboard
             builder = InlineKeyboardBuilder()
-            btn_text = "⚖️ Приравнять" if tx.type == "reconcile" else "✅ Верно"
+            btn_text = tr('⚖️ Приравнять') if tx.type == "reconcile" else tr('✅ Верно')
             builder.button(text=btn_text, callback_data=f"confirm:{tx_id}")
-            builder.button(text="❌ Отменить", callback_data=f"cancel:{tx_id}")
+            builder.button(text=tr('❌ Отменить'), callback_data=f"cancel:{tx_id}")
             builder.adjust(2)
 
             # If multiple transactions, add index header "1 из 2"
-            header = f"*{i} из {total_txs}*\n" if total_txs > 1 else ""
+            header = tr('*{p1} из {p3}*\n' ,p1=f'{i}', p3=f'{total_txs}') if total_txs > 1 else ""
             # Pass empty string so voice text is NOT repeated in each card
             confirmation_msg = header + report_service.format_transaction_confirmation(tx, "")
 
@@ -98,4 +99,4 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
 
     except Exception as e:
         logger.error(f"Error processing voice message: {e}", exc_info=True)
-        await message.answer("❌ Произошла ошибка при обработке голосового сообщения. Попробуйте ещё раз.")
+        await message.answer(tr('❌ Произошла ошибка при обработке голосового сообщения. Попробуйте ещё раз.'))

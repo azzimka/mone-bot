@@ -18,19 +18,17 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import {
-  categoryLabel,
-  type Entry,
-  type EntryInput,
-  localDay,
-} from "../lib/api";
+import { type Entry, type EntryInput, localDay } from "../lib/api";
 import {
   formatEntryAmount,
   previousDay,
   validateEntryAmount,
 } from "../lib/entry";
+import { useCategories } from "./category-provider";
 import { CategoryIcon } from "./category-icon";
 import { Modal } from "./dialog";
+
+import { useLanguage } from "./language-provider";
 
 const priority = {
   expense: ["Еда", "Транспорт", "Жильё", "Здоровье", "Одежда", "Другое"],
@@ -39,6 +37,7 @@ const priority = {
 
 export function EntryModal({
   entry,
+  newType = "expense",
   categories,
   currency,
   demo,
@@ -49,6 +48,7 @@ export function EntryModal({
   onDelete,
 }: {
   entry: Entry | "new";
+  newType?: Entry["type"];
   categories: string[];
   currency: string;
   demo: boolean;
@@ -58,22 +58,24 @@ export function EntryModal({
   onSave: (data: EntryInput) => Promise<void>;
   onDelete: (entry: Entry) => void;
 }) {
+  const { t, categoryLabel, descriptionLabel } = useLanguage();
+  const {catalog}=useCategories();
+  const availablePriority=(kind:Entry["type"])=>priority[kind].filter(name=>categories.includes(name));
   const today = demo ? "2026-10-18" : localDay();
-  const initialType = entry === "new" ? "expense" : entry.type;
+  const initialType = entry === "new" ? newType : entry.type;
   const [type, setType] = useState<Entry["type"]>(initialType);
   const [amount, setAmount] = useState(
     entry === "new" ? "" : formatEntryAmount(entry.amount),
   );
   const [date, setDate] = useState(entry === "new" ? today : entry.date);
   const [selected, setSelected] = useState<Record<Entry["type"], string>>({
-    expense: "Еда",
-    income: "Зарплата",
+    expense: availablePriority("expense")[0]??categories[0]??"Другое",
+    income: availablePriority("income")[0]??categories[0]??"Другое",
     ...(entry === "new" ? {} : { [entry.type]: entry.category }),
   });
   const category = selected[type];
-  const [description, setDescription] = useState(
-    entry === "new" ? "" : entry.description,
-  );
+  const initialDescription = entry === "new" ? "" : descriptionLabel(entry);
+  const [description, setDescription] = useState(initialDescription);
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
   const [touched, setTouched] = useState(false);
@@ -88,13 +90,11 @@ export function EntryModal({
   const submitting = useRef(false);
   const id = useId();
   const validated = validateEntryAmount(amount);
-  const order = [...new Set([...priority[type], ...categories, category])];
-  const suggestions = priority[type].includes(category)
-    ? priority[type]
-    : [category, ...priority[type]].slice(0, 6);
+  const order = [...new Set([...availablePriority(type), ...categories, category])];
+  const suggestions = [...new Set([category,...availablePriority(type),...categories])].slice(0,6);
   const shown = expanded
     ? order.filter((name) =>
-        `${categoryLabel(name)} ${name}`
+        `${categoryLabel(name)} ${name} ${categoryLabel(catalog.find(item=>item.name===name)?.parent_name??"")}`
           .toLocaleLowerCase()
           .includes(query.trim().toLocaleLowerCase()),
       )
@@ -163,7 +163,7 @@ export function EntryModal({
           date !== entry.date ||
           category !== entry.category ||
           type !== entry.type ||
-          description !== entry.description;
+          description !== initialDescription;
     if (changed) {
       setDiscard(true);
       scroll.current?.scrollTo({ top: 0 });
@@ -181,8 +181,8 @@ export function EntryModal({
     <Modal
       title={
         entry === "new"
-          ? "Kirim yoki chiqim qo‘shish"
-          : "Operatsiyani tahrirlash"
+          ? t(type === "income" ? "Kirim qo‘shish" : "Chiqim qo‘shish")
+          : t("Operatsiyani tahrirlash")
       }
       className={`entry-sheet ${type}`}
       style={style}
@@ -222,29 +222,29 @@ export function EntryModal({
           {demo && (
             <p className="entry-demo">
               <ShieldCheck size={15} />
-              Namuna rejimi — haqiqiy hisobingiz o‘zgarmaydi.
+              {t("Namuna rejimi — haqiqiy hisobingiz o‘zgarmaydi.")}
             </p>
           )}
           {discard && (
             <div className="entry-discard" role="alert">
-              <strong>Yozuv hali saqlanmagan.</strong>
-              <p>Kiritgan ma’lumotlaringizni saqlamasdan chiqasizmi?</p>
+              <strong>{t("Yozuv hali saqlanmagan.")}</strong>
+              <p>{t("Kiritgan ma’lumotlaringizni saqlamasdan chiqasizmi?")}</p>
               <div>
                 <button type="button" onClick={() => setDiscard(false)}>
-                  Yozishni davom ettirish
+                  {t("Yozishni davom ettirish")}
                 </button>
                 <button type="button" onClick={onClose}>
-                  Saqlamasdan chiqish
+                  {t("Saqlamasdan chiqish")}
                 </button>
               </div>
             </div>
           )}
           <fieldset className="entry-fields" disabled={saving}>
-            <legend className="sr-only">Operatsiya ma’lumotlari</legend>
+            <legend className="sr-only">{t("Operatsiya ma’lumotlari")}</legend>
             <div
               className="entry-type"
               role="group"
-              aria-label="Kirim yoki chiqim"
+              aria-label={t("Kirim yoki chiqim")}
             >
               <button
                 type="button"
@@ -260,8 +260,8 @@ export function EntryModal({
                   <ArrowUpRight size={22} />
                 </span>
                 <span>
-                  <strong>Chiqim</strong>
-                  <small>Pul sarfladim</small>
+                  <strong>{t("Chiqim")}</strong>
+                  <small>{t("Pul sarfladim")}</small>
                 </span>
                 {type === "expense" && <Check size={17} />}
               </button>
@@ -279,8 +279,8 @@ export function EntryModal({
                   <ArrowDownLeft size={22} />
                 </span>
                 <span>
-                  <strong>Kirim</strong>
-                  <small>Pul oldim</small>
+                  <strong>{t("Kirim")}</strong>
+                  <small>{t("Pul oldim")}</small>
                 </span>
                 {type === "income" && <Check size={17} />}
               </button>
@@ -289,7 +289,11 @@ export function EntryModal({
               className={`entry-amount ${touched && validated.error ? "invalid" : ""} ${amount.replace(/\D/g, "").length > 10 ? "long" : ""}`}
             >
               <label htmlFor={`${id}-amount`}>
-                Qancha {type === "expense" ? "sarfladingiz" : "pul oldingiz"}?
+                {t(
+                  type === "expense"
+                    ? "Qancha sarfladingiz?"
+                    : "Qancha pul oldingiz?",
+                )}
               </label>
               <div>
                 <input
@@ -303,7 +307,7 @@ export function EntryModal({
                   maxLength={32}
                   placeholder="0"
                   value={amount}
-                  aria-label={`Summa (${currency})`}
+                  aria-label={`${t("Summa")} (${currency})`}
                   aria-invalid={touched && !!validated.error}
                   aria-describedby={`${id}-amount-hint`}
                   onChange={(event) =>
@@ -327,8 +331,8 @@ export function EntryModal({
                 role={touched && validated.error ? "alert" : undefined}
               >
                 {touched && validated.error
-                  ? validated.error
-                  : "Masalan: 25 000 yoki 25 000,50"}
+                  ? t(validated.error)
+                  : t("Masalan: 25 000 yoki 25 000,50")}
               </p>
             </div>
 
@@ -337,7 +341,7 @@ export function EntryModal({
               aria-labelledby={`${id}-category-label`}
             >
               <div className="entry-section-heading">
-                <h3 id={`${id}-category-label`}>Kategoriya</h3>
+                <h3 id={`${id}-category-label`}>{t("Kategoriya")}</h3>
                 <span>
                   <Check size={13} />
                   {categoryLabel(category)}
@@ -348,8 +352,8 @@ export function EntryModal({
                   <Search size={18} />
                   <input
                     type="search"
-                    placeholder="Kategoriyani qidirish"
-                    aria-label="Kategoriyani qidirish"
+                    placeholder={t("Kategoriyani qidirish")}
+                    aria-label={t("Kategoriyani qidirish")}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
@@ -358,7 +362,7 @@ export function EntryModal({
               <div
                 className="entry-category-grid"
                 role="group"
-                aria-label="Kategoriya tanlash"
+                aria-label={t("Kategoriya tanlash")}
               >
                 {shown.map((name) => (
                   <button
@@ -371,7 +375,7 @@ export function EntryModal({
                     }
                   >
                     <CategoryIcon name={name} />
-                    <span>{categoryLabel(name)}</span>
+                    <span>{categoryLabel(name)}{catalog.find(item=>item.name===name)?.parent_name&&<small className="entry-parent-label">{categoryLabel(catalog.find(item=>item.name===name)!.parent_name!)}</small>}</span>
                     {category === name && (
                       <Check className="category-check" size={13} />
                     )}
@@ -380,7 +384,7 @@ export function EntryModal({
               </div>
               {!shown.length && (
                 <p className="entry-search-empty">
-                  Kategoriya topilmadi. Qidiruvni o‘zgartiring.
+                  {t("Kategoriya topilmadi. Qidiruvni o‘zgartiring.")}
                 </p>
               )}
               <button
@@ -392,14 +396,15 @@ export function EntryModal({
                   setQuery("");
                 }}
               >
-                {expanded ? "Qisqartirish" : "Barcha kategoriyalar"}
+                {expanded ? t("Qisqartirish") : t("Barcha kategoriyalar")}
                 <ChevronDown size={16} className={expanded ? "rotated" : ""} />
               </button>
             </section>
 
             <div className="entry-note">
               <label htmlFor={`${id}-note`}>
-                Izoh <span>ixtiyoriy</span>
+                {t("Izoh")}
+                <span>{t("ixtiyoriy")}</span>
               </label>
               <textarea
                 id={`${id}-note`}
@@ -407,8 +412,8 @@ export function EntryModal({
                 maxLength={2000}
                 placeholder={
                   type === "expense"
-                    ? "Nimaga sarfladingiz? Masalan, ishga taksi."
-                    : "Pul qayerdan keldi? Masalan, oylik maosh."
+                    ? t("Nimaga sarfladingiz? Masalan, ishga taksi.")
+                    : t("Pul qayerdan keldi? Masalan, oylik maosh.")
                 }
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -418,10 +423,10 @@ export function EntryModal({
                   {noteSuggestions.map((note) => (
                     <button
                       type="button"
-                      key={note}
-                      onClick={() => setDescription(note)}
+                      key={t(note)}
+                      onClick={() => setDescription(t(note))}
                     >
-                      {note}
+                      {t(note)}
                     </button>
                   ))}
                 </div>
@@ -435,7 +440,7 @@ export function EntryModal({
 
             <div className="entry-date">
               <div className="entry-section-heading">
-                <h3>Sana</h3>
+                <h3>{t("Sana")}</h3>
               </div>
               <div className="entry-date-controls">
                 <button
@@ -443,14 +448,14 @@ export function EntryModal({
                   aria-pressed={date === today}
                   onClick={() => setDate(today)}
                 >
-                  Bugun
+                  {t("Bugun")}
                 </button>
                 <button
                   type="button"
                   aria-pressed={date === previousDay(today)}
                   onClick={() => setDate(previousDay(today))}
                 >
-                  Kecha
+                  {t("Kecha")}
                 </button>
                 <label>
                   <CalendarDays size={17} />
@@ -458,7 +463,7 @@ export function EntryModal({
                     id={`${id}-date`}
                     type="date"
                     required
-                    aria-label="Operatsiya sanasi"
+                    aria-label={t("Operatsiya sanasi")}
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                   />
@@ -466,14 +471,14 @@ export function EntryModal({
               </div>
               {!date && (
                 <p className="entry-field-error">
-                  Operatsiya sanasini tanlang.
+                  {t("Operatsiya sanasini tanlang.")}
                 </p>
               )}
             </div>
           </fieldset>
           {error && (
             <p className="entry-field-error entry-server-error" role="alert">
-              {error}
+              {t(error)}
             </p>
           )}
         </div>
@@ -484,7 +489,7 @@ export function EntryModal({
               className="entry-delete"
               onClick={() => onDelete(entry)}
               disabled={saving}
-              aria-label="Operatsiyani o‘chirish"
+              aria-label={t("Operatsiyani o‘chirish")}
             >
               <Trash2 size={20} />
             </button>
@@ -500,10 +505,10 @@ export function EntryModal({
               <Check size={20} />
             )}
             {saving
-              ? "Saqlanmoqda…"
+              ? t("Saqlanmoqda…")
               : type === "expense"
-                ? "Chiqimni saqlash"
-                : "Kirimni saqlash"}
+                ? t("Chiqimni saqlash")
+                : t("Kirimni saqlash")}
           </button>
         </div>
       </form>

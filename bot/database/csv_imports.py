@@ -1,3 +1,4 @@
+from bot.services.i18n import tr, button_variants
 """CSV imports share a transaction with their ledger rows."""
 
 import hashlib
@@ -33,7 +34,7 @@ async def stage_import(session: AsyncSession, user_id: int, filename: str,
             # A concurrent upload of the same file won the unique constraint.
             item = (await session.execute(query)).scalar_one()
     if item.status == "complete":
-        raise CsvImportError("Этот CSV уже импортирован. Повторная загрузка не создаёт копии операций.")
+        raise CsvImportError(tr('Этот CSV уже импортирован. Повторная загрузка не создаёт копии операций.'))
     item.rows_json = json.dumps([tx.to_dict() for tx in preview.transactions], ensure_ascii=False)
     item.status = "pending"
     item.expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
@@ -49,14 +50,14 @@ async def finish_import(session: AsyncSession, import_id: str, telegram_id: int,
              .with_for_update(of=CsvImport))
     item = (await session.execute(query)).scalar_one_or_none()
     if item is None:
-        raise CsvImportError("Импорт не найден или принадлежит другому пользователю.")
+        raise CsvImportError(tr('Импорт не найден или принадлежит другому пользователю.'))
     if item.status != "pending":
-        raise CsvImportError("Этот импорт уже завершён или отменён.")
+        raise CsvImportError(tr('Этот импорт уже завершён или отменён.'))
     expires = item.expires_at
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
     if expires <= datetime.now(timezone.utc):
-        raise CsvImportError("Подтверждение устарело. Отправьте CSV заново.")
+        raise CsvImportError(tr('Подтверждение устарело. Отправьте CSV заново.'))
     if cancel:
         item.status = "cancelled"
         await session.flush()

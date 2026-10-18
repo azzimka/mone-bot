@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "Mone — shaxsiy moliya kabineti",
+  "short_name": "Mone",
+  "description": "Kirim, chiqim va moliyaviy odatlaringizni bir joyda boshqaring.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#197c5b",
+  "background_color": "#f7f9f7",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

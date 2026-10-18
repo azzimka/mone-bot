@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 from groq import Groq
+from bot.services.i18n import current_language
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class SpeechService:
             transcription = self.client.audio.transcriptions.create(
                 file=(Path(audio_path).name, file.read()),
                 model=self.model,
-                language="ru",
+                language=current_language.get(),
                 response_format="text"
             )
         return transcription

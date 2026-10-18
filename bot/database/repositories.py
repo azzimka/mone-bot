@@ -39,6 +39,15 @@ class UserRepository:
     """Repository for managing User entities."""
 
     @staticmethod
+    async def set_language(session: AsyncSession, telegram_id: int, language: str) -> User:
+        if language not in {"uz", "ru"}:
+            raise ValueError("Unsupported language")
+        user = await UserRepository.get_or_create(session, telegram_id)
+        user.language = language
+        await session.flush()
+        return user
+
+    @staticmethod
     async def get_or_create(
         session: AsyncSession,
         telegram_id: int,

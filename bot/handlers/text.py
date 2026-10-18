@@ -1,3 +1,4 @@
+from bot.services.i18n import tr, button_variants
 import uuid
 import logging
 from aiogram import Router, F
@@ -34,7 +35,7 @@ async def handle_text_message(message: Message, session: AsyncSession):
         parsed_result = await ai_parser.parse(message.text, settings.DEFAULT_CURRENCY)
 
         if not parsed_result or not parsed_result.transactions:
-            await message.answer("⚠️ Не удалось распознать финансовые операции в вашем сообщении. Попробуйте написать, например: «Кофе 25000» или «Зарплата 5000000».")
+            await message.answer(tr('⚠️ Не удалось распознать финансовые операции в вашем сообщении. Попробуйте написать, например: «Кофе 25000» или «Зарплата 5000000».'))
             return
 
         total_txs = len(parsed_result.transactions)
@@ -50,13 +51,13 @@ async def handle_text_message(message: Message, session: AsyncSession):
             }
 
             builder = InlineKeyboardBuilder()
-            btn_text = "⚖️ Приравнять" if tx.type == "reconcile" else "✅ Верно"
+            btn_text = tr('⚖️ Приравнять') if tx.type == "reconcile" else tr('✅ Верно')
             builder.button(text=btn_text, callback_data=f"confirm:{tx_id}")
-            builder.button(text="❌ Отменить", callback_data=f"cancel:{tx_id}")
+            builder.button(text=tr('❌ Отменить'), callback_data=f"cancel:{tx_id}")
             builder.adjust(2)
 
             # If multiple transactions, add index header "1 из 2"
-            header = f"*{i} из {total_txs}*\n" if total_txs > 1 else ""
+            header = tr('*{p1} из {p3}*\n' ,p1=f'{i}', p3=f'{total_txs}') if total_txs > 1 else ""
             # Pass empty string — original text is already visible above
             confirmation_msg = header + report_service.format_transaction_confirmation(tx, "")
 
@@ -68,4 +69,4 @@ async def handle_text_message(message: Message, session: AsyncSession):
 
     except Exception as e:
         logger.error(f"Error processing text message: {e}", exc_info=True)
-        await message.answer("❌ Произошла ошибка при обработке сообщения. Попробуйте ещё раз.")
+        await message.answer(tr('❌ Произошла ошибка при обработке сообщения. Попробуйте ещё раз.'))

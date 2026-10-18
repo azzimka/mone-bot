@@ -1,3 +1,4 @@
+from bot.services.i18n import tr, button_variants
 import os
 import tempfile
 import logging
@@ -109,11 +110,11 @@ def _balance_keyboard() -> InlineKeyboardMarkup:
     """Inline keyboard shown on the balance screen."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="⚖️ Сверить", callback_data="balance:reconcile"),
-            InlineKeyboardButton(text="➕ Пополнить", callback_data="balance:topup"),
+            InlineKeyboardButton(text=tr('⚖️ Сверить'), callback_data="balance:reconcile"),
+            InlineKeyboardButton(text=tr('➕ Пополнить'), callback_data="balance:topup"),
         ],
         [
-            InlineKeyboardButton(text="📋 История", callback_data="balance:history:0"),
+            InlineKeyboardButton(text=tr('📋 История'), callback_data="balance:history:0"),
         ],
     ])
 
@@ -133,16 +134,13 @@ def _format_balance_message(data: dict, currency: str) -> str:
         status = "🟢"
 
     return (
-        f"💰 *Текущий баланс*\n\n"
-        f"{status} *{fmt(float(balance), currency)}*\n\n"
-        f"├ 📥 Пополнения:  `{fmt(float(income), currency)}`\n"
-        f"└ 📤 Расходы:      `{fmt(float(expenses), currency)}`"
+        tr('💰 *Текущий баланс*\n\n{p1} *{p3}*\n\n├ 📥 Пополнения:  `{p5}`\n└ 📤 Расходы:      `{p7}`' ,p1=f'{status}', p3=f'{fmt(float(balance), currency)}', p5=f'{fmt(float(income), currency)}', p7=f'{fmt(float(expenses), currency)}')
     )
 
 
 # ─── Balance screen ───────────────────────────────────────────────────────────
 
-@router.message(F.text == "💰 Баланс")
+@router.message(F.text.in_(button_variants('💰 Баланс')))
 @router.message(Command("balance"))
 async def cmd_balance(message: Message, session: AsyncSession):
     """Show the main balance overview."""
@@ -156,13 +154,10 @@ async def cmd_balance(message: Message, session: AsyncSession):
     # First time: balance is zero and no income at all — prompt initial setup
     if data["total_income"] == 0 and data["total_expenses"] == 0:
         await message.answer(
-            "💰 *Добро пожаловать в раздел Баланс!*\n\n"
-            "Здесь ты можешь отслеживать свои деньги в реальном времени.\n\n"
-            "Для начала *установи стартовый баланс* — сколько у тебя сейчас есть денег? "
-            "Нажми «➕ Пополнить» и введи сумму.",
+            tr('💰 *Добро пожаловать в раздел Баланс!*\n\nЗдесь ты можешь отслеживать свои деньги в реальном времени.\n\nДля начала *установи стартовый баланс* — сколько у тебя сейчас есть денег? Нажми «➕ Пополнить» и введи сумму.'),
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="➕ Установить стартовый баланс", callback_data="balance:topup"),
+                InlineKeyboardButton(text=tr('➕ Установить стартовый баланс'), callback_data="balance:topup"),
             ]]),
         )
         return
@@ -212,16 +207,16 @@ async def cb_balance_history(callback: CallbackQuery, session: AsyncSession):
     txs = txs[:PAGE_SIZE]
 
     if not txs and page == 0:
-        await callback.answer("Пополнений ещё нет.", show_alert=True)
+        await callback.answer(tr('Пополнений ещё нет.'), show_alert=True)
         return
 
     # Group by month label
     month_names = [
-        "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+        tr('Январь'), tr('Февраль'), tr('Март'), tr('Апрель'), tr('Май'), tr('Июнь'),
+        tr('Июль'), tr('Август'), tr('Сентябрь'), tr('Октябрь'), tr('Ноябрь'), tr('Декабрь'),
     ]
 
-    lines = ["📋 *История пополнений*\n"]
+    lines = [tr('📋 *История пополнений*\n')]
     current_month_label = None
 
     for tx in txs:
@@ -240,14 +235,14 @@ async def cb_balance_history(callback: CallbackQuery, session: AsyncSession):
     # Pagination buttons
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="← Назад", callback_data=f"balance:history:{page - 1}"))
+        nav_buttons.append(InlineKeyboardButton(text=tr('← Назад'), callback_data=f"balance:history:{page - 1}"))
     if has_next:
-        nav_buttons.append(InlineKeyboardButton(text="Дальше →", callback_data=f"balance:history:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text=tr('Дальше →'), callback_data=f"balance:history:{page + 1}"))
 
     keyboard = []
     if nav_buttons:
         keyboard.append(nav_buttons)
-    keyboard.append([InlineKeyboardButton(text="◀ К балансу", callback_data="balance:back")])
+    keyboard.append([InlineKeyboardButton(text=tr('◀ К балансу'), callback_data="balance:back")])
 
     await callback.message.edit_text(
         "\n".join(lines),
@@ -264,11 +259,10 @@ async def cb_start_topup(callback: CallbackQuery, state: FSMContext):
     """Start the top-up FSM — ask for the amount."""
     await state.set_state(TopUpStates.waiting_for_amount)
     await callback.message.answer(
-        "💵 *Введи сумму пополнения* (в сумах):\n\n"
-        "_Например:_ `500000` или `1 500 000`",
+        tr('💵 *Введи сумму пополнения* (в сумах):\n\n_Например:_ `500000` или `1 500 000`'),
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="balance:topup_cancel"),
+            InlineKeyboardButton(text=tr('❌ Отмена'), callback_data="balance:topup_cancel"),
         ]]),
     )
     await callback.answer()
@@ -280,28 +274,25 @@ async def fsm_topup_amount(message: Message, state: FSMContext):
     raw = message.text.strip().replace(" ", "").replace(",", "").replace(".", "")
     if not raw.isdigit():
         await message.answer(
-            "⚠️ Введи только число, например: `150000`",
+            tr('⚠️ Введи только число, например: `150000`'),
             parse_mode="Markdown",
         )
         return
 
     amount = int(raw)
     if amount <= 0:
-        await message.answer("⚠️ Сумма должна быть больше нуля.")
+        await message.answer(tr('⚠️ Сумма должна быть больше нуля.'))
         return
 
     await state.update_data(amount=amount)
     await state.set_state(TopUpStates.waiting_for_description)
 
     await message.answer(
-        f"✅ Сумма: *{fmt(amount, 'UZS')}*\n\n"
-        "📝 *Откуда эти деньги?* Напиши источник:\n"
-        "_Например:_ Зарплата, От Дилноза, Фриланс...\n\n"
-        "Или нажми «Пропустить»",
+        tr('✅ Сумма: *{p1}*\n\n📝 *Откуда эти деньги?* Напиши источник:\n_Например:_ Зарплата, От Дилноза, Фриланс...\n\nИли нажми «Пропустить»' ,p1=f"{fmt(amount, 'UZS')}"),
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⏩ Пропустить", callback_data="balance:topup_nodesc"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="balance:topup_cancel"),
+            InlineKeyboardButton(text=tr('⏩ Пропустить'), callback_data="balance:topup_nodesc"),
+            InlineKeyboardButton(text=tr('❌ Отмена'), callback_data="balance:topup_cancel"),
         ]]),
     )
 
@@ -326,7 +317,7 @@ async def cb_topup_nodesc(callback: CallbackQuery, state: FSMContext, session: A
 async def cb_topup_cancel(callback: CallbackQuery, state: FSMContext):
     """Cancel the top-up flow."""
     await state.clear()
-    await callback.message.edit_text("❌ Пополнение отменено.")
+    await callback.message.edit_text(tr('❌ Пополнение отменено.'))
     await callback.answer()
 
 
@@ -360,7 +351,7 @@ async def _save_topup(
     data = await _get_balance_data(session, user.id)
 
     await message.answer(
-        f"✅ *+{fmt(amount, user.default_currency)}* добавлено к балансу!\n\n"
+        tr('✅ *+{p1}* добавлено к балансу!\n\n' ,p1=f'{fmt(amount, user.default_currency)}')
         + _format_balance_message(data, user.default_currency),
         parse_mode="Markdown",
         reply_markup=_balance_keyboard(),
@@ -400,15 +391,10 @@ async def cb_start_reconcile(callback: CallbackQuery, state: FSMContext, session
 
     await state.set_state(ReconcileStates.waiting_for_amount)
     await callback.message.answer(
-        f"⚖️ *Сверка баланса*\n\n"
-        f"В боте сейчас: *{curr_str}*\n\n"
-        "Сколько у тебя сейчас денег суммарно на всех картах и в кармане?\n"
-        "Введи число или напиши сумму через плюс:\n"
-        "_Например:_ `50000` или `25000 + 15000 + 10000`\n\n"
-        "_(также можешь отправить голосовое сообщение)_",
+        tr('⚖️ *Сверка баланса*\n\nВ боте сейчас: *{p1}*\n\nСколько у тебя сейчас денег суммарно на всех картах и в кармане?\nВведи число или напиши сумму через плюс:\n_Например:_ `50000` или `25000 + 15000 + 10000`\n\n_(также можешь отправить голосовое сообщение)_' ,p1=f'{curr_str}'),
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="balance:reconcile_cancel"),
+            InlineKeyboardButton(text=tr('❌ Отмена'), callback_data="balance:reconcile_cancel"),
         ]]),
     )
     await callback.answer()
@@ -418,7 +404,7 @@ async def cb_start_reconcile(callback: CallbackQuery, state: FSMContext, session
 async def cb_reconcile_cancel(callback: CallbackQuery, state: FSMContext):
     """Cancel reconciliation."""
     await state.clear()
-    await callback.message.edit_text("❌ Сверка баланса отменена.")
+    await callback.message.edit_text(tr('❌ Сверка баланса отменена.'))
     await callback.answer()
 
 
@@ -435,10 +421,9 @@ async def fsm_reconcile_amount(message: Message, state: FSMContext, session: Asy
 
     if target is None or target < 0:
         await message.answer(
-            "⚠️ Не удалось распознать сумму.\n\n"
-            "Введи число (например `50000`) или сложение (`20000 + 30000`), либо нажми «Отмена»:",
+            tr('⚠️ Не удалось распознать сумму.\n\nВведи число (например `50000`) или сложение (`20000 + 30000`), либо нажми «Отмена»:'),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="❌ Отмена", callback_data="balance:reconcile_cancel"),
+                InlineKeyboardButton(text=tr('❌ Отмена'), callback_data="balance:reconcile_cancel"),
             ]]),
         )
         return
@@ -464,10 +449,10 @@ async def fsm_reconcile_voice(message: Message, state: FSMContext, session: Asyn
             os.remove(temp_path)
 
     if not transcribed_text or transcribed_text.startswith("К сожалению"):
-        await message.reply("⚠️ Не удалось разобрать голос. Попробуйте написать текстом.")
+        await message.reply(tr('⚠️ Не удалось разобрать голос. Попробуйте написать текстом.'))
         return
 
-    await message.reply(f"🎤 *Распознано:* _{transcribed_text}_", parse_mode="Markdown")
+    await message.reply(tr('🎤 *Распознано:* _{p1}_' ,p1=f'{transcribed_text}'), parse_mode="Markdown")
 
     target = parse_balance_expression(transcribed_text)
     if target is None:
@@ -477,7 +462,7 @@ async def fsm_reconcile_voice(message: Message, state: FSMContext, session: Asyn
 
     if target is None or target < 0:
         await message.answer(
-            "⚠️ Не удалось определить сумму из голоса. Попробуйте сказать, например: «50 тысяч» или напишите число текстом."
+            tr('⚠️ Не удалось определить сумму из голоса. Попробуйте сказать, например: «50 тысяч» или напишите число текстом.')
         )
         return
 
@@ -513,7 +498,7 @@ async def _apply_reconciliation(
             description=f"Сверка (+{diff_fmt} {currency})",
             date=date.today(),
         )
-        diff_str = f"+{diff_fmt} {currency} (доход)"
+        diff_str = tr('+{p1} {p3} (доход)' ,p1=f'{diff_fmt}', p3=f'{currency}')
     elif diff < 0:
         abs_diff = abs(diff)
         abs_diff_fmt = f"{float(abs_diff):,.0f}".replace(",", " ")
@@ -527,9 +512,9 @@ async def _apply_reconciliation(
             description=f"Сверка (-{abs_diff_fmt} {currency})",
             date=date.today(),
         )
-        diff_str = f"-{abs_diff_fmt} {currency} (расход)"
+        diff_str = tr('-{p1} {p3} (расход)' ,p1=f'{abs_diff_fmt}', p3=f'{currency}')
     else:
-        diff_str = f"0 {currency} (без изменений)"
+        diff_str = tr('0 {p1} (без изменений)' ,p1=f'{currency}')
 
     await state.clear()
 
@@ -540,10 +525,7 @@ async def _apply_reconciliation(
     status_icon = "🟢" if target_decimal > 0 else "🔴"
 
     await message.answer(
-        f"⚖️ *Баланс успешно сверен!*\n\n"
-        f"├ Было в боте:  `{curr_fmt} {currency}`\n"
-        f"├ Разница:      *{diff_str}*\n"
-        f"└ Стало:        *{target_fmt} {currency}* {status_icon}\n\n"
+        tr('⚖️ *Баланс успешно сверен!*\n\n├ Было в боте:  `{p1} {p3}`\n├ Разница:      *{p5}*\n└ Стало:        *{p7} {p9}* {p11}\n\n' ,p1=f'{curr_fmt}', p3=f'{currency}', p5=f'{diff_str}', p7=f'{target_fmt}', p9=f'{currency}', p11=f'{status_icon}')
         + _format_balance_message(new_data, currency),
         parse_mode="Markdown",
         reply_markup=_balance_keyboard(),

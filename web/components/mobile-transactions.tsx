@@ -1,6 +1,8 @@
 import { ChevronRight } from "lucide-react";
-import { categoryLabel, type Entry, money } from "../lib/api";
+import { type Entry } from "../lib/api";
 import { CategoryIcon } from "./category-icon";
+
+import { useLanguage } from "./language-provider";
 
 export function MobileTransactions({
   items,
@@ -9,11 +11,12 @@ export function MobileTransactions({
   items: Entry[];
   onEdit: (entry: Entry) => void;
 }) {
+  const { t, money, categoryLabel, descriptionLabel } = useLanguage();
   if (!items.length) return null;
   return (
     <div className="mobile-transactions">
       <p className="mobile-list-hint">
-        Ko‘rish yoki tahrirlash uchun yozuvni bosing.
+        {t("Ko‘rish yoki tahrirlash uchun yozuvni bosing.")}
       </p>
       {items.map((entry) => (
         <button
@@ -21,7 +24,7 @@ export function MobileTransactions({
           className={`mobile-entry-card ${entry.type}`}
           key={entry.id}
           onClick={() => onEdit(entry)}
-          aria-label={`${entry.description || categoryLabel(entry.category)}, ${entry.type === "income" ? "kirim" : "chiqim"}, ${money(entry.amount)} ${entry.currency}, ${entry.date.split("-").reverse().join(".")}. Ko‘rish va tahrirlash`}
+          aria-label={`${descriptionLabel(entry) || categoryLabel(entry.category)}, ${t(entry.type === "income" ? "Kirim" : "Chiqim")}, ${money(entry.amount)} ${entry.currency}, ${entry.date.split("-").reverse().join(".")}. ${t("Ko‘rish va tahrirlash")}`}
         >
           <span className="mobile-entry-icon">
             <CategoryIcon name={entry.category} />
@@ -29,10 +32,12 @@ export function MobileTransactions({
           <span className="mobile-entry-content">
             <span className="mobile-entry-heading">
               <strong>{categoryLabel(entry.category)}</strong>
-              <span>{entry.type === "income" ? "Kirim" : "Chiqim"}</span>
+              <span>{entry.type === "income" ? t("Kirim") : t("Chiqim")}</span>
             </span>
             {entry.description && (
-              <span className="mobile-entry-note">{entry.description}</span>
+              <span className="mobile-entry-note">
+                {descriptionLabel(entry)}
+              </span>
             )}
             <span className="mobile-entry-date">
               {entry.date.split("-").reverse().join(".")}

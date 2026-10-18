@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Syntax & Code Check
+    name: Backend and frontend checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -19,9 +19,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check Python Syntax
+      - name: Install backend test dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Backend tests
+        run: python -m unittest discover -s tests -v
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Frontend checks
+        working-directory: web
         run: |
-          python -m compileall bot/
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
 
   deploy:
     name: Deploy to Oracle Cloud
@@ -39,12 +55,34 @@ jobs:
             echo "🚀 Starting deployment on Oracle Cloud..."
             cd /opt/mone
 
+            echo "Backing up PostgreSQL before deployment..."
+            umask 077
+            mkdir -p backups
+            chmod 700 backups
+            if [ -n "$(sudo docker compose ps -q db)" ]; then
+              backup_file="backups/predeploy-$(date -u +%Y%m%dT%H%M%SZ).dump"
+              sudo docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$backup_file"
+              test -s "$backup_file"
+              sudo docker compose exec -T db pg_restore --list < "$backup_file" > /dev/null
+              echo "Database backup created and validated."
+            fi
+
             echo "📥 Pulling latest changes from GitHub..."
             git fetch origin main
-            git reset --hard origin/main
+            git checkout main
+            git merge --ff-only origin/main
 
             echo "🐳 Rebuilding and restarting bot and web containers..."
             sudo docker compose -f docker-compose.yml -f docker-compose.web.yml up -d --build
 
+            echo "Checking database-backed API health..."
+            for attempt in $(seq 1 30); do
+              if sudo docker compose -f docker-compose.yml -f docker-compose.web.yml exec -T web python -c 'from urllib.request import urlopen; assert urlopen("http://127.0.0.1:8000/api/health", timeout=5).status == 200'; then
+                break
+              fi
+              if [ "$attempt" -eq 30 ]; then exit 1; fi
+              sleep 2
+            done
+            test -n "$(sudo docker compose ps -q bot)"
             echo "✅ Deployment completed successfully!"
             sudo docker compose ps
