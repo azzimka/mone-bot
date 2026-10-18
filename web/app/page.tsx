@@ -32,6 +32,7 @@ import {
   Menu,
   Plus,
   Minus,
+  RefreshCw,
   Search,
   Send,
   ShoppingBag,
@@ -684,11 +685,22 @@ export default function Page() {
             <ChevronRight size={14} />
             <strong>{t(titles[view])}</strong>
           </div>
+          <div className="topbar-controls">
           <div className="topbar-actions desktop-connection">
             <span className={`connection ${user ? "connected" : ""}`}>
               <i />
               {user ? t("Telegram ulangan") : t("Namuna rejimi")}
             </span>
+          </div>
+          <button
+            type="button"
+            className="icon-button app-refresh"
+            aria-label={t("Ilovani yangilash")}
+            title={t("Ilovani yangilash")}
+            onClick={() => window.location.reload()}
+          >
+            <RefreshCw size={20} />
+          </button>
           </div>
         </header>
         <main>

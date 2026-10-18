@@ -13,6 +13,7 @@ Sana: 2026-10-19. Hosting: Oracle; Vercel loyihasi o‘chirilgan.
 - Asosiy valyuta, vaqt mintaqasi, hafta boshlanishi va oltitagacha tezkor kategoriya sozlamalari. Valyuta tanlovi eski tarixni konvertatsiya qilmaydi.
 - Kategoriya/subkategoriyalarni arxivlash va qayta tiklash; tarix saqlanadi. 112 ikonka, 13 mavzu, ikonka qidiruvi. Bitta kategoriya uchun ixtiyoriy o‘zbekcha/ruscha nomlar; til almashganda tarixdagi kategoriya kaliti o‘zgarmaydi.
 - Moliyaviy boshqaruv sozlamalarda alohida oynalar orqali ochiladi. Mobil formalar, uzun izohlar uchun ko‘p qatorli maydon, scroll va katta tegish joylari qo‘shilgan.
+- PWA va oddiy brauzerda yuqori o‘ng burchakdagi ↻ tugma ilovani to‘liq qayta yuklaydi. Moliyaviy ma’lumotlarning har 30 soniya va fokusga qaytganda avtomatik yangilanishi ham saqlangan. Pull-to-refresh qo‘shilmagan.
 
 ## Tekshiruvlar
 

@@ -85,3 +85,13 @@
 .category-icon-browser .category-icon-grid { margin-top:12px; }
 
 .finance-field textarea { resize:vertical;line-height:1.5; }
+
+.topbar-controls { display:flex;align-items:center;gap:16px;flex:none; }
+.app-refresh { width:44px;height:44px;flex:none;color:#37624e; }
+.app-refresh:hover { background:#edf4ee; }
+@media(max-width:760px){
+  .topbar { gap:8px; }
+  .topbar .breadcrumb { width:auto;flex:1;min-width:0; }
+  .topbar .breadcrumb:after { display:none; }
+  .topbar-controls { gap:0; }
+}

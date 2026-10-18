@@ -1,5 +1,6 @@
 // Uzbek source phrases are stable translation keys. Unknown user content is never translated.
 export const russian: Record<string, string> = {
+  "Ilovani yangilash": "Обновить приложение",
   "Boshqa tildagi nom": "Название на другом языке",
   "O‘zbekcha nom": "Название на узбекском",
   "Ruscha nom": "Название на русском",
