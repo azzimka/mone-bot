@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import (
 
 # Import all models to ensure metadata registration
 import bot.models  # noqa: F401
-from bot.models.base import Base
 from bot.config import settings
+from bot.database.schema import initialize_schema
 
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
@@ -48,5 +48,4 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database tables using Base.metadata."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await initialize_schema(engine)

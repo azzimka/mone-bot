@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from bot.database.csv_imports import finish_import, stage_import
-from bot.models import Base, CsvImport, Transaction, User
+from bot.models import Base, CsvImport, Transaction, User, WebSession
 from bot.services.csv_import import CsvImportError, parse_csv
+from bot.services.web_auth import approve_login, consume_login, request_login
 
 DATA = b"date,type,amount\n2025-01-01,income,1000\n2025-01-02,expense,25.50\n"
 
@@ -75,3 +76,30 @@ class CsvPostgresTests(unittest.IsolatedAsyncioTestCase):
             item = await session.get(CsvImport, import_id)
             count = (await session.execute(select(func.count()).select_from(Transaction))).scalar_one()
             self.assertEqual(count, 2 if item.status == "complete" else 0)
+
+    async def test_web_login_cannot_be_approved_twice(self):
+        async with self.pool.begin() as session:
+            item, _ = await request_login(session)
+            request_id = item.id
+
+        async def approve():
+            async with self.pool.begin() as session:
+                return await approve_login(session, request_id, self.user_id)
+
+        results = await asyncio.gather(approve(), approve())
+        self.assertEqual(sorted(results), [False, True])
+
+    async def test_web_login_can_only_issue_one_session(self):
+        async with self.pool.begin() as session:
+            item, cookie = await request_login(session)
+            await approve_login(session, item.id, self.user_id)
+
+        async def consume():
+            async with self.pool.begin() as session:
+                return await consume_login(session, cookie)
+
+        results = await asyncio.gather(consume(), consume())
+        self.assertEqual(sorted(status for status, _ in results), ["approved", "expired"])
+        async with self.pool() as session:
+            count = (await session.execute(select(func.count()).select_from(WebSession))).scalar_one()
+            self.assertEqual(count, 1)

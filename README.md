@@ -6,6 +6,9 @@
 
 ## Что это
 
+**Web kabinet (yangi):** dashboard, grafiklar, operatsiyalar va Telegram orqali
+kirish uchun [website yo‘riqnomasi](web/README.md). Ishlab chiqish `mirzo` branchida.
+
 **Mone** — это умный Telegram-бот, который помогает отслеживать твои расходы. Просто говоришь ему голосом (или пишешь текстом) что и сколько потратил — он всё записывает, категоризирует и показывает статистику.
 
 Никаких таблиц, никаких сложных приложений. Просто мессенджер, который ты и так открываешь каждый день.

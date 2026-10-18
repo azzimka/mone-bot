@@ -1,0 +1,243 @@
+"""Same-origin web API and static Next.js export, backed by the bot's ledger."""
+
+import logging
+import re
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from api.config import WebSettings
+from api.schemas import TransactionInput
+from bot.database.repositories import DEFAULT_CATEGORIES
+from bot.database.schema import initialize_schema
+from bot.models import Transaction, User, WebLoginRequest, WebSession
+from bot.services.web_auth import consume_login, digest, is_expired, request_login
+
+logger = logging.getLogger(__name__)
+SESSION_COOKIE = "mone_session"
+LOGIN_COOKIE = "mone_login"
+
+
+async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    async with request.app.state.pool() as session:
+        yield session
+
+
+async def get_user(request: Request, session: AsyncSession = Depends(get_session)) -> User:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    if not token:
+        raise HTTPException(401, "Telegram orqali kiring.")
+    user = (await session.execute(select(User).join(WebSession).where(
+        WebSession.token_hash == digest(token), WebSession.expires_at > datetime.now(timezone.utc)
+    ))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(401, "Sessiya tugagan. Qayta kiring.")
+    return user
+
+
+def serialize_tx(tx: Transaction) -> dict:
+    return {"id": tx.id, "type": tx.type, "amount": str(tx.amount), "currency": tx.currency,
+            "category": tx.category or "Другое", "description": tx.description or "",
+            "date": tx.date.isoformat()}
+
+
+def user_json(user: User) -> dict:
+    return {"first_name": user.first_name or "Mone foydalanuvchisi", "username": user.username,
+            "currency": user.default_currency}
+
+
+def period(start: date | None, end: date | None) -> tuple[date, date]:
+    today = datetime.now(ZoneInfo("Asia/Tashkent")).date()
+    end = end or today
+    start = start or today.replace(day=1)
+    if start > end or (end - start).days > 3660:
+        raise HTTPException(422, "Davr noto‘g‘ri yoki 10 yildan uzun.")
+    return start, end
+
+
+def ledger_filter(user: User):
+    return (Transaction.user_id == user.id, Transaction.currency == user.default_currency)
+
+
+def create_app(config: WebSettings | None = None, pool: async_sessionmaker | None = None) -> FastAPI:
+    config = config or WebSettings()
+    secure = config.WEB_PUBLIC_URL.startswith("https://")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        engine = None
+        if pool is None:
+            engine = create_async_engine(config.DATABASE_URL, pool_pre_ping=True)
+            await initialize_schema(engine)
+            app.state.pool = async_sessionmaker(engine, expire_on_commit=False)
+        else:
+            app.state.pool = pool
+        yield
+        if engine:
+            await engine.dispose()
+
+    app = FastAPI(title="Mone API", version="0.1.0", lifespan=lifespan)
+    if pool is not None:
+        app.state.pool = pool
+    app.add_middleware(CORSMiddleware, allow_origins=[config.WEB_PUBLIC_URL],
+                       allow_credentials=True, allow_methods=["GET", "POST", "PATCH", "DELETE"],
+                       allow_headers=["Content-Type"])
+
+    @app.middleware("http")
+    async def browser_security(request: Request, call_next):
+        if request.url.path.startswith("/api/") and request.method in {"POST", "PATCH", "DELETE", "PUT"}:
+            if request.headers.get("origin") != config.WEB_PUBLIC_URL:
+                return JSONResponse({"detail": "So‘rov manbasi ruxsat etilmagan."}, status_code=403)
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_error(request: Request, exc: SQLAlchemyError):
+        logger.error("Web database request failed (%s)", type(exc).__name__)
+        return JSONResponse({"detail": "Baza bilan aloqa uzildi. Qayta urinib ko‘ring."}, status_code=503)
+
+    @app.get("/api/health")
+    async def health(session: AsyncSession = Depends(get_session)):
+        await session.execute(text("SELECT 1"))
+        return {"status": "ok"}
+
+    @app.post("/api/auth/telegram/request")
+    async def login_request(response: Response, request: Request, session: AsyncSession = Depends(get_session)):
+        username = config.TELEGRAM_BOT_USERNAME.lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+            raise HTTPException(503, "Serverda TELEGRAM_BOT_USERNAME sozlanmagan.")
+        # Reuse an unexpired request from this browser rather than storing one per click.
+        cookie = request.cookies.get(LOGIN_COOKIE, "")
+        request_id, _, secret = cookie.partition(".")
+        item = await session.get(WebLoginRequest, request_id) if len(request_id) == 32 else None
+        if item is None or item.consumed or is_expired(item.expires_at) or item.browser_hash != digest(secret):
+            now = datetime.now(timezone.utc)
+            await session.execute(delete(WebLoginRequest).where(WebLoginRequest.expires_at <= now))
+            await session.execute(delete(WebSession).where(WebSession.expires_at <= now))
+            item, cookie = await request_login(session)
+        await session.commit()
+        response.set_cookie(LOGIN_COOKIE, cookie, httponly=True, secure=secure, samesite="strict",
+                            max_age=300, path="/api/auth")
+        return {"url": f"https://t.me/{username}?start=web_{item.id}", "code": item.id[:6].upper()}
+
+    @app.post("/api/auth/telegram/poll")
+    async def login_poll(request: Request, response: Response, session: AsyncSession = Depends(get_session)):
+        status, token = await consume_login(session, request.cookies.get(LOGIN_COOKIE, ""))
+        await session.commit()
+        if token:
+            response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=secure, samesite="strict",
+                                max_age=7 * 24 * 3600, path="/api")
+            response.delete_cookie(LOGIN_COOKIE, path="/api/auth")
+        return {"status": status}
+
+    @app.get("/api/me")
+    async def me(user: User = Depends(get_user)):
+        return user_json(user)
+
+    @app.post("/api/auth/logout", status_code=204)
+    async def logout(request: Request, response: Response, session: AsyncSession = Depends(get_session)):
+        await session.execute(delete(WebSession).where(WebSession.token_hash == digest(request.cookies.get(SESSION_COOKIE, ""))))
+        await session.commit()
+        response.delete_cookie(SESSION_COOKIE, path="/api")
+        response.delete_cookie(LOGIN_COOKIE, path="/api/auth")
+
+    @app.get("/api/categories")
+    async def categories(user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
+        existing = (await session.execute(select(Transaction.category).where(
+            *ledger_filter(user), Transaction.category.is_not(None)).distinct())).scalars().all()
+        return sorted({name for _, name in DEFAULT_CATEGORIES} | set(existing))
+
+    @app.get("/api/summary")
+    async def summary(start: date | None = None, end: date | None = None,
+                      user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
+        start, end = period(start, end)
+        scoped = ledger_filter(user)
+        rows = (await session.execute(select(Transaction.date, Transaction.type, func.sum(Transaction.amount), func.count())
+                .where(*scoped, Transaction.date >= start, Transaction.date <= end)
+                .group_by(Transaction.date, Transaction.type).order_by(Transaction.date))).all()
+        totals = {"income": Decimal(0), "expense": Decimal(0)}
+        daily = {}
+        count = 0
+        for day, kind, amount, quantity in rows:
+            if kind not in totals:
+                continue
+            totals[kind] += amount
+            daily.setdefault(day.isoformat(), {"date": day.isoformat(), "income": "0", "expense": "0"})[kind] = str(amount)
+            count += quantity
+        all_time = (await session.execute(select(Transaction.type, func.sum(Transaction.amount))
+                    .where(*scoped).group_by(Transaction.type))).all()
+        balance = sum((amount if kind == "income" else -amount if kind == "expense" else Decimal(0)
+                       for kind, amount in all_time), Decimal(0))
+        cats = (await session.execute(select(func.coalesce(Transaction.category, "Другое"), func.sum(Transaction.amount))
+                .where(*scoped, Transaction.type == "expense", Transaction.date >= start, Transaction.date <= end)
+                .group_by(Transaction.category).order_by(func.sum(Transaction.amount).desc()))).all()
+        return {"currency": user.default_currency, "start": start, "end": end, "balance": str(balance),
+                "income": str(totals["income"]), "expense": str(totals["expense"]), "count": count,
+                "daily": list(daily.values()), "categories": [{"name": name, "amount": str(amount)} for name, amount in cats]}
+
+    @app.get("/api/transactions")
+    async def transactions(start: date | None = None, end: date | None = None,
+                           search: str = Query("", max_length=100), kind: str = Query("", pattern="^(income|expense)?$"),
+                           offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                           user: User = Depends(get_user), session: AsyncSession = Depends(get_session)):
+        start, end = period(start, end)
+        filters = [*ledger_filter(user), Transaction.date >= start, Transaction.date <= end]
+        if kind:
+            filters.append(Transaction.type == kind)
+        if search:
+            from sqlalchemy import or_
+            filters.append(or_(Transaction.description.icontains(search, autoescape=True),
+                               Transaction.category.icontains(search, autoescape=True)))
+        total = (await session.execute(select(func.count()).select_from(Transaction).where(*filters))).scalar_one()
+        items = (await session.execute(select(Transaction).where(*filters)
+                 .order_by(Transaction.date.desc(), Transaction.id.desc()).offset(offset).limit(limit))).scalars().all()
+        return {"items": [serialize_tx(tx) for tx in items], "total": total}
+
+    @app.post("/api/transactions", status_code=201)
+    async def create_transaction(body: TransactionInput, user: User = Depends(get_user),
+                                 session: AsyncSession = Depends(get_session)):
+        item = Transaction(user_id=user.id, currency=user.default_currency, **body.model_dump())
+        session.add(item)
+        await session.commit()
+        return serialize_tx(item)
+
+    @app.patch("/api/transactions/{transaction_id}")
+    async def edit_transaction(transaction_id: int, body: TransactionInput, user: User = Depends(get_user),
+                               session: AsyncSession = Depends(get_session)):
+        item = (await session.execute(select(Transaction).where(Transaction.id == transaction_id,
+                 *ledger_filter(user)).with_for_update())).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(404, "Operatsiya topilmadi.")
+        for key, value in body.model_dump().items():
+            setattr(item, key, value)
+        await session.commit()
+        return serialize_tx(item)
+
+    @app.delete("/api/transactions/{transaction_id}", status_code=204)
+    async def delete_transaction(transaction_id: int, user: User = Depends(get_user),
+                                 session: AsyncSession = Depends(get_session)):
+        result = await session.execute(delete(Transaction).where(Transaction.id == transaction_id, *ledger_filter(user)))
+        if not result.rowcount:
+            raise HTTPException(404, "Operatsiya topilmadi.")
+        await session.commit()
+
+    static = Path(__file__).resolve().parent.parent / "web" / "out"
+    if static.is_dir():
+        app.mount("/", StaticFiles(directory=static, html=True), name="website")
+    return app

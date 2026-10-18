@@ -29,5 +29,12 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 
+# Website
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+web/.env.local
+
 # Alembic
 alembic/versions/__pycache__/

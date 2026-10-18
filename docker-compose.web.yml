@@ -1,0 +1,14 @@
+# Optional web service: docker compose -f docker-compose.yml -f docker-compose.web.yml up -d --build
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy

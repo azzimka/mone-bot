@@ -1,0 +1,4 @@
+-r requirements.txt
+fastapi==0.144.0
+starlette==1.8.0
+uvicorn==0.54.0

@@ -5,5 +5,6 @@ from bot.models.category import Category
 from bot.models.transaction import Transaction
 from bot.models.user import User
 from bot.models.csv_import import CsvImport
+from bot.models.web_session import WebLoginRequest, WebSession
 
-__all__ = ["Base", "User", "Transaction", "Category", "CsvImport"]
+__all__ = ["Base", "User", "Transaction", "Category", "CsvImport", "WebLoginRequest", "WebSession"]
