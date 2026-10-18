@@ -1,0 +1,4 @@
+date,type,amount,currency,category,description
+2026-10-01,income,5000000,UZS,,Oylik
+2026-10-02,expense,25000,UZS,,Kofe
+2026-10-03,expense,30000,UZS,Транспорт,Taxi

@@ -9,7 +9,7 @@ from typing import Callable, Dict, Any, Awaitable
 from bot.config import settings
 from bot.database.engine import async_session_maker, init_db
 from bot.database.repositories import CategoryRepository
-from bot.handlers import commands, voice, text, callbacks, balance
+from bot.handlers import commands, voice, text, callbacks, balance, csv_import
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ async def set_bot_commands(bot: Bot):
         BotCommand(command="today", description="Расходы за сегодня"),
         BotCommand(command="week", description="Расходы за неделю"),
         BotCommand(command="month", description="Расходы за месяц"),
+        BotCommand(command="import", description="Импорт расходов и доходов из CSV"),
         BotCommand(command="reset", description="Удалить все данные (сброс)"),
     ]
     await bot.set_my_commands(commands)
@@ -75,6 +76,7 @@ async def main():
     dp.update.middleware(DbSessionMiddleware(async_session_maker))
 
     # Include routers — balance must come before text to avoid FSM state conflicts
+    dp.include_router(csv_import.router)
     dp.include_router(commands.router)
     dp.include_router(balance.router)
     dp.include_router(voice.router)

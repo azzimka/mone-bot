@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repositories import UserRepository, CategoryRepository, TransactionRepository, CATEGORY_ICON_MAP
 from bot.models.transaction import Transaction
+from bot.models.csv_import import CsvImport
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -91,6 +92,7 @@ async def cmd_help(message: Message):
         "📊 *Расходы за неделю* — сколько потрачено каждый день\n"
         "🚌 *Автобус / Метро* — мгновенно записывает 2 000 сум\n\n"
         "Если бот ошибётся — нажми ❌ под сообщением."
+        "\n\n/import — импорт расходов и доходов из CSV."
     )
     await message.answer(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
@@ -299,6 +301,7 @@ async def callback_reset_confirm(callback, session: AsyncSession):
     await session.execute(
         sql_delete(Transaction).where(Transaction.user_id == user.id)
     )
+    await session.execute(sql_delete(CsvImport).where(CsvImport.user_id == user.id))
     await callback.message.edit_text(
         "🗑 *Все транзакции удалены.*\n\nМожешь начинать с чистого листа! 🆕",
         parse_mode="Markdown",
