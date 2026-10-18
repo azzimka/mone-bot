@@ -1,0 +1,50 @@
+name: Deploy Mone Bot to Oracle Cloud
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Syntax & Code Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python Syntax
+        run: |
+          python -m compileall bot/
+
+  deploy:
+    name: Deploy to Oracle Cloud
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute remote deployment via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            echo "🚀 Starting deployment on Oracle Cloud..."
+            cd /opt/mone
+
+            echo "📥 Pulling latest changes from GitHub..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "🐳 Rebuilding and restarting bot container..."
+            sudo docker compose up -d --build bot
+
+            echo "✅ Deployment completed successfully!"
+            sudo docker compose ps
