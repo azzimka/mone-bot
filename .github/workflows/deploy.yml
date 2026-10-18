@@ -67,6 +67,7 @@ jobs:
               echo "Database backup created and validated."
             fi
 
+            umask 022
             echo "📥 Pulling latest changes from GitHub..."
             git fetch origin main
             git checkout main

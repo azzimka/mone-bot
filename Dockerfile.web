@@ -17,7 +17,7 @@ COPY --from=python-builder /install /usr/local
 COPY bot/ ./bot/
 COPY api/ ./api/
 COPY --from=frontend /web/out/ ./web/out/
-RUN useradd --uid 10001 --create-home mone
+RUN chmod -R a+rX /app && useradd --uid 10001 --create-home mone
 USER mone
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8000
