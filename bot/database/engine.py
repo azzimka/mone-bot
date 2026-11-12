@@ -15,10 +15,22 @@ import bot.models  # noqa: F401
 from bot.config import settings
 from bot.database.schema import initialize_schema
 
+_engine_kwargs: dict = {
+    "echo": False,
+    "future": True,
+}
+if not settings.DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs.update(
+        pool_size=20,
+        max_overflow=30,
+        pool_timeout=15,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+    )
+
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
-    echo=False,
-    future=True,
+    **_engine_kwargs,
 )
 
 async_session_maker: async_sessionmaker[AsyncSession] = async_sessionmaker(

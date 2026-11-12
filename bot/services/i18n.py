@@ -213,3 +213,31 @@ UZBEK["csv_import_help"] = 'CSV import\n\nBotning shaxsiy chatiga CSV fayl yubor
 RUSSIAN["csv_import_help"] = 'Импорт CSV\n\nОтправьте CSV документом в личный чат с ботом (до 1 МБ, до 2000 операций).\nРазделитель: запятая, точка с запятой или табуляция. Кодировка: UTF-8 / Windows-1251.\n\nПример:\ndate,type,amount,currency,category,description\n2026-10-01,income,5000000,UZS,,Зарплата\n2026-10-02,expense,25000,UZS,,Кофе\n\nПоддерживаются русские и узбекские названия столбцов: дата / sana, сумма / summa, тип / turi, категория / kategoriya, описание / izoh, валюта / valyuta.\nТип: income / expense, kirim / chiqim, доход / расход. Без type: плюс — доход, минус — расход. Можно использовать отдельные столбцы kirim и chiqim.\nДата: YYYY-MM-DD или DD.MM.YYYY. Сумма: 1234.56 или «1 234,56»; запятая в сумме требует разделителя ; либо кавычек. Только основная валюта пользователя.\n\nКатегории из файла сохраняются, пустые определяются по описанию. Сначала вы увидите результат, затем подтвердите импорт.'
 
 RUSSIAN["Til saqlandi. Bot va website hisobingizda shu til ishlatiladi. Tilni website sozlamasida o‘zgartirasiz."] = "Язык сохранён для бота и сайта. Изменить его можно в настройках сайта."
+
+UZBEK.update({
+    "🧠 AI-финансист": "🧠 AI-moliyachi",
+    "📊 Разбор за месяц": "📊 Oylik tahlil",
+    "🔍 На что я часто трачу?": "🔍 Ko‘p sarflanadigan joylar",
+    "💡 Проверить покупку": "💡 Xaridni tekshirish",
+    "🗑 Новый диалог": "🗑 Yangi suhbat",
+    "⬅️ Выйти из режима": "⬅️ Rejimdan chiqish",
+    "счета пока не заведены": "hisoblar hali kiritilmagan",
+    "✅ Вышел из режима AI-финансиста. Обычные сообщения снова записывают доходы и расходы.": "✅ AI-moliyachi rejimidan chiqdingiz. Oddiy xabarlar yana kirim va chiqim sifatida saqlanadi.",
+    "🧹 История диалога очищена. База операций на месте — задавай новый вопрос.": "🧹 Suhbat tarixi tozalandi. Operatsiyalar bazasi saqlangan — yangi savol bering.",
+    "💡 Напиши или скажи голосом, что и за сколько хочешь купить (и с какого счёта, если важно) — например:\n«Хочу купить телефон за 4 000 000 сум, стоит ли сейчас?»": "💡 Nima va qanchaga olmoqchi ekaningizni yozing yoki ovozli xabar yuboring (qaysi hisobdan ekanini ham aytsangiz bo‘ladi) — masalan:\n«4 000 000 so‘mga telefon olmoqchiman, hozir olish to‘g‘rimi?»",
+    "⚠️ Не удалось получить ответ AI-финансиста. Попробуй ещё раз через пару секунд.": "⚠️ AI-moliyachidan javob olib bo‘lmadi. Bir necha soniyadan keyin qayta urinib ko‘ring.",
+    "⚠️ Не удалось распознать голосовое сообщение. Попробуй сказать ещё раз или напиши текстом.": "⚠️ Ovozli xabarni tushunib bo‘lmadi. Qayta ayting yoki matn bilan yozing.",
+    "Как тебе удобнее получить ответ?": "Javobni qaysi ko‘rinishda olasiz?",
+    "🎙 Голосом": "🎙 Ovozda",
+    "📝 Текстом": "📝 Matnda",
+    "Как вам ответить?": "Qanday hajmda javob beray?",
+    "⚡ По делу": "⚡ Qisqa va aniq",
+    "📖 Подробно": "📖 Batafsil",
+    "⏳ Анализирую финансы…": "⏳ Moliyaviy ma’lumotlarni tahlil qilyapman…",
+    "⏳ Анализирую финансы и записываю голосовой ответ…": "⏳ Moliyaviy ma’lumotlarni tahlil qilib, ovozli javob tayyorlayapman…",
+    "⏳ Готовлю ответ, подожди пару секунд…": "⏳ Javob tayyorlanmoqda, bir necha soniya kuting…",
+    "⏳ Этот вопрос уже обрабатывается…": "⏳ Bu savol allaqachon ko‘rib chiqilmoqda…",
+    "Этот вопрос принадлежит другому пользователю.": "Bu savol boshqa foydalanuvchiga tegishli.",
+    "⚠️ Этот запрос уже обработан или устарел. Отправь вопрос заново.": "⚠️ Bu so‘rov allaqachon bajarilgan yoki eskirgan. Savolingizni qayta yuboring.",
+    "⚠️ Голосовая озвучка сейчас недоступна (проверьте ключ ElevenLabs), отвечаю текстом:": "⚠️ Ovozli javob hozircha mavjud emas (ElevenLabs kalitini tekshiring), matn shaklida javob beraman:",
+})

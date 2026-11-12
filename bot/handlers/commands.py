@@ -4,6 +4,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeChat, MenuButtonWebApp, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,12 +38,21 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             KeyboardButton(text=tr('📱 Открыть приложение'), web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)),
         ])
     rows.append([KeyboardButton(text=tr("💰 Баланс")), KeyboardButton(text=tr("📋 Расходы за сегодня"))])
+    rows.append([KeyboardButton(text=tr("🧠 AI-финансист"))])
     keyboard = ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
         persistent=True,
     )
     return keyboard
+
+
+async def _keyboard_for_state(state: FSMContext | None) -> ReplyKeyboardMarkup:
+    if state is not None:
+        from bot.handlers.advisor import AdvisorStates, get_advisor_keyboard
+        if await state.get_state() == AdvisorStates.chatting.state:
+            return get_advisor_keyboard()
+    return get_main_keyboard()
 
 
 def fmt(amount: Decimal | float | int, currency: str = "UZS") -> str:
@@ -53,8 +63,9 @@ def fmt(amount: Decimal | float | int, currency: str = "UZS") -> str:
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, session: AsyncSession):
+async def cmd_start(message: Message, session: AsyncSession, state: FSMContext):
     """Handle /start command, register user and seed defaults."""
+    await state.clear()
     user = await UserRepository.get_or_create(
         session=session,
         telegram_id=message.from_user.id,
@@ -71,6 +82,7 @@ async def configure_chat_menu(bot, telegram_id: int) -> bool:
         uz = current_language.get() == "uz"
         await bot.set_my_commands([
             BotCommand(command="app", description="📱 Ilova" if uz else "📱 Приложение"),
+            BotCommand(command="advisor", description="🧠 AI-moliyachi" if uz else "🧠 AI-финансист"),
             BotCommand(command="today", description="📋 Bugun" if uz else "📋 Сегодня"),
             BotCommand(command="import", description="📥 CSV import" if uz else "📥 Импорт CSV"),
             BotCommand(command="settings", description="⚙️ Sozlamalar" if uz else "⚙️ Настройки"),
@@ -122,10 +134,10 @@ async def cmd_app(message: Message):
 
 
 @router.message(Command("help"))
-async def cmd_help(message: Message):
+async def cmd_help(message: Message, state: FSMContext):
     """Detailed help message."""
-    text = "🎤 Xabar yozing yoki ovoz yuboring.\n✅ Tekshirib tasdiqlang.\n📱 Ilovada hisobotlar va sozlamalar.\n📥 CSV uchun /import." if current_language.get() == "uz" else "🎤 Напишите сообщение или отправьте голосовое.\n✅ Проверьте и подтвердите.\n📱 Отчёты и настройки — в приложении.\n📥 Для CSV — /import."
-    await message.answer(text, reply_markup=get_main_keyboard())
+    text = "🎤 Xabar yozing yoki ovoz yuboring.\n✅ Tekshirib tasdiqlang.\n🧠 AI-moliyachi maslahati: /advisor.\n📱 Ilovada hisobotlar va sozlamalar.\n📥 CSV uchun /import." if current_language.get() == "uz" else "🎤 Напишите сообщение или отправьте голосовое.\n✅ Проверьте и подтвердите.\n🧠 Режим AI-финансиста: /advisor.\n📱 Отчёты и настройки — в приложении.\n📥 Для CSV — /import."
+    await message.answer(text, reply_markup=await _keyboard_for_state(state))
 
 
 
@@ -171,7 +183,7 @@ async def cmd_quick_transport(message: Message, session: AsyncSession):
 
 @router.message(F.text.in_(button_variants('📋 Расходы за сегодня')))
 @router.message(Command("today"))
-async def cmd_today(message: Message, session: AsyncSession):
+async def cmd_today(message: Message, session: AsyncSession, state: FSMContext):
     """Detailed today's expense report — every transaction + total."""
     user = await UserRepository.get_or_create(
         session, message.from_user.id,
@@ -186,11 +198,13 @@ async def cmd_today(message: Message, session: AsyncSession):
         session, user.id, today, today, "expense"
     )
 
+    kb = await _keyboard_for_state(state)
+
     if not transactions:
         await message.answer(
             tr('📋 *{p1} — расходов нет*\n\nСкажи мне голосом или напиши, на что потратил деньги 🎤' ,p1=f"{today.strftime('%d.%m.%Y')}"),
             parse_mode="Markdown",
-            reply_markup=get_main_keyboard(),
+            reply_markup=kb,
         )
         return
 
@@ -212,13 +226,13 @@ async def cmd_today(message: Message, session: AsyncSession):
     await message.answer(
         "\n".join(lines),
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(),
+        reply_markup=kb,
     )
 
 
 @router.message(F.text.in_(button_variants('📊 Расходы за неделю')))
 @router.message(Command("week"))
-async def cmd_week(message: Message, session: AsyncSession):
+async def cmd_week(message: Message, session: AsyncSession, state: FSMContext):
     """Weekly expense report — daily breakdown for last 7 days."""
     user = await UserRepository.get_or_create(
         session, message.from_user.id,
@@ -235,12 +249,13 @@ async def cmd_week(message: Message, session: AsyncSession):
     total_week = await TransactionRepository.get_total(
         session, user.id, week_ago, today, "expense"
     )
+    kb = await _keyboard_for_state(state)
 
     if not daily_totals:
         await message.answer(
             tr('📊 *Расходы за неделю*\n\nЗа последние 7 дней расходов нет.'),
             parse_mode="Markdown",
-            reply_markup=get_main_keyboard(),
+            reply_markup=kb,
         )
         return
 
@@ -275,7 +290,7 @@ async def cmd_week(message: Message, session: AsyncSession):
     await message.answer(
         "\n".join(lines),
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(),
+        reply_markup=kb,
     )
 
 

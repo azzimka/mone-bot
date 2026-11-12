@@ -2,7 +2,7 @@ import asyncio
 from contextlib import suppress
 import logging
 from aiogram import Bot, Dispatcher
-from aiogram.types import TelegramObject, BotCommand
+from aiogram.types import ErrorEvent, TelegramObject, BotCommand
 from aiogram import BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from typing import Callable, Dict, Any, Awaitable
@@ -11,7 +11,7 @@ from bot.config import settings
 from bot.database.engine import async_session_maker, init_db
 from bot.database.repositories import CategoryRepository
 from bot.handlers.language import LanguageMiddleware, router as language_router
-from bot.handlers import commands, voice, text, callbacks, balance, csv_import, web_login
+from bot.handlers import commands, voice, text, callbacks, balance, csv_import, web_login, advisor
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ async def set_bot_commands(bot: Bot):
     """Set bot commands menu."""
     commands = [
         BotCommand(command="app", description="📱 Ilova / Приложение"),
+        BotCommand(command="advisor", description="🧠 AI-moliyachi / AI-финансист"),
         BotCommand(command="today", description="📋 Bugun / Сегодня"),
         BotCommand(command="import", description="📥 CSV import"),
         BotCommand(command="settings", description="⚙️ Sozlamalar / Настройки"),
@@ -93,12 +94,13 @@ async def main():
     dp.message.outer_middleware(LanguageMiddleware())
     dp.callback_query.outer_middleware(LanguageMiddleware())
 
-    # Include routers — balance must come before text to avoid FSM state conflicts
+    # Include routers — balance & advisor must come before voice/text to avoid FSM conflicts
     dp.include_router(language_router)
     dp.include_router(web_login.router)
     dp.include_router(csv_import.router)
     dp.include_router(commands.router)
     dp.include_router(balance.router)
+    dp.include_router(advisor.router)
     dp.include_router(voice.router)
     dp.include_router(text.router)
     dp.include_router(callbacks.router)
@@ -111,6 +113,15 @@ async def main():
         finance_task = asyncio.create_task(finance_worker(async_session_maker,bot))
     dp.startup.register(start_finance)
 
+    @dp.errors()
+    async def on_dispatcher_error(event: ErrorEvent) -> bool:
+        logger.error(
+            "Unhandled bot update error (%s)",
+            type(event.exception).__name__,
+            exc_info=event.exception,
+        )
+        return True
+
     logger.info("Starting bot polling...")
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
@@ -118,6 +129,8 @@ async def main():
         if finance_task:
             finance_task.cancel()
             with suppress(asyncio.CancelledError): await finance_task
+        with suppress(Exception):
+            await advisor.close_services()
         await bot.session.close()
 
 if __name__ == "__main__":
