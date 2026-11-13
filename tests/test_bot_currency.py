@@ -220,6 +220,8 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
         report = message.answer.call_args.args[0]
         self.assertIn("1 574.75 UZS", report)
         self.assertNotIn("USD", report)
+        self.assertNotIn("Пополнения:", report)
+        self.assertNotIn("Расходы:", report)
 
     async def test_topup_decimal_input_is_not_multiplied_by_removing_period(self):
         state = self.state(currency="USD", account_id=self.usd.id)

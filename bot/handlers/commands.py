@@ -1,20 +1,19 @@
 import logging
-from datetime import date, timedelta, timezone
+from datetime import date, timedelta
 from decimal import Decimal
-from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeChat, MenuButtonWebApp, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeChat, MenuButtonDefault, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import settings
-from bot.database.repositories import UserRepository, CategoryRepository, TransactionRepository, CATEGORY_ICON_MAP
+from bot.database.repositories import UserRepository, CategoryRepository, TransactionRepository
 from bot.models.transaction import Transaction
 from bot.models.csv_import import CsvImport
 from bot.services.finance import local_today
-from bot.services.i18n import category_label, current_language, tr, button_variants
+from bot.services.i18n import current_language, tr, button_variants
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -32,27 +31,27 @@ WEEKDAY_NAMES = {
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Build the persistent reply keyboard with main action buttons."""
-    rows = []
-    if settings.WEB_PUBLIC_URL:
-        rows.append([
-            KeyboardButton(text=tr('📱 Открыть приложение'), web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)),
-        ])
-    rows.append([KeyboardButton(text=tr("💰 Баланс")), KeyboardButton(text=tr("📋 Расходы за сегодня"))])
-    rows.append([KeyboardButton(text=tr("🧠 AI-финансист"))])
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=rows,
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=tr("💰 Баланс")), KeyboardButton(text=tr("📋 Расходы за сегодня"))],
+            [KeyboardButton(text=tr("📅 История расходов"))],
+        ],
         resize_keyboard=True,
-        persistent=True,
+        is_persistent=True,
     )
-    return keyboard
 
 
-async def _keyboard_for_state(state: FSMContext | None) -> ReplyKeyboardMarkup:
-    if state is not None:
-        from bot.handlers.advisor import AdvisorStates, get_advisor_keyboard
-        if await state.get_state() == AdvisorStates.chatting.state:
-            return get_advisor_keyboard()
-    return get_main_keyboard()
+# A client may still display a reply keyboard sent before the update.
+@router.message(F.text.in_({
+    "🧠 AI-финансист", "🧠 AI-moliyachi",
+    "📊 Разбор за месяц", "📊 Oylik tahlil",
+    "🔍 На что я часто трачу?", "🔍 Ko‘p sarflanadigan joylar",
+    "💡 Проверить покупку", "💡 Xaridni tekshirish",
+    "🗑 Новый диалог", "🗑 Yangi suhbat",
+    "⬅️ Выйти из режима", "⬅️ Rejimdan chiqish",
+}))
+async def refresh_old_keyboard(message: Message):
+    await message.answer(tr("Меню обновлено."), reply_markup=get_main_keyboard())
 
 
 def fmt(amount: Decimal | float | int, currency: str = "UZS") -> str:
@@ -81,15 +80,9 @@ async def configure_chat_menu(bot, telegram_id: int) -> bool:
     try:
         uz = current_language.get() == "uz"
         await bot.set_my_commands([
-            BotCommand(command="app", description="📱 Ilova" if uz else "📱 Приложение"),
-            BotCommand(command="advisor", description="🧠 AI-moliyachi" if uz else "🧠 AI-финансист"),
-            BotCommand(command="today", description="📋 Bugun" if uz else "📋 Сегодня"),
-            BotCommand(command="import", description="📥 CSV import" if uz else "📥 Импорт CSV"),
-            BotCommand(command="settings", description="⚙️ Sozlamalar" if uz else "⚙️ Настройки"),
-            BotCommand(command="help", description="❓ Yordam" if uz else "❓ Помощь"),
+            BotCommand(command="start", description="Boshlash" if uz else "Начать"),
         ], scope=BotCommandScopeChat(chat_id=telegram_id))
-        if settings.WEB_PUBLIC_URL:
-            await bot.set_chat_menu_button(chat_id=telegram_id, menu_button=MenuButtonWebApp(text="📱 Kabinet" if current_language.get() == "uz" else "📱 Кабинет", web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)))
+        await bot.set_chat_menu_button(chat_id=telegram_id, menu_button=MenuButtonDefault())
         return True
     except Exception:
         logger.warning("Could not update per-chat language menu")
@@ -109,9 +102,9 @@ def web_settings_url() -> str:
 
 async def send_settings_link(message: Message):
     if not settings.WEB_PUBLIC_URL:
-        await message.answer(tr("Веб-приложение пока не настроено."))
+        await message.answer(tr("Сайт пока не настроен."))
         return
-    await message.answer("⚙️ Sozlamalar" if current_language.get() == "uz" else "⚙️ Настройки", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚙️ Sozlamalarni ochish" if current_language.get() == "uz" else "⚙️ Открыть настройки", web_app=WebAppInfo(url=web_settings_url()))]]))
+    await message.answer("⚙️ Sozlamalar" if current_language.get() == "uz" else "⚙️ Настройки", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚙️ Sozlamalarni ochish" if current_language.get() == "uz" else "⚙️ Открыть настройки", url=web_settings_url())]]))
 
 
 @router.message(Command("settings"))
@@ -119,26 +112,15 @@ async def cmd_settings(message: Message):
     await send_settings_link(message)
 
 
-@router.message(Command("app"))
-async def cmd_app(message: Message):
-    """Open WebApp Mini App."""
-    if not settings.WEB_PUBLIC_URL:
-        await message.answer(tr('Веб-приложение пока не настроено.'))
-        return
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text=tr('🚀 Открыть Mone Mini App'), web_app=WebAppInfo(url=settings.WEB_PUBLIC_URL)),
-        ]]
-    )
-    await message.answer(tr('Нажми кнопку ниже, чтобы открыть финансовый кабинет прямо в Telegram:'), reply_markup=kb)
-
-
 @router.message(Command("help"))
-async def cmd_help(message: Message, state: FSMContext):
-    """Detailed help message."""
-    text = "🎤 Xabar yozing yoki ovoz yuboring.\n✅ Tekshirib tasdiqlang.\n🧠 AI-moliyachi maslahati: /advisor.\n📱 Ilovada hisobotlar va sozlamalar.\n📥 CSV uchun /import." if current_language.get() == "uz" else "🎤 Напишите сообщение или отправьте голосовое.\n✅ Проверьте и подтвердите.\n🧠 Режим AI-финансиста: /advisor.\n📱 Отчёты и настройки — в приложении.\n📥 Для CSV — /import."
-    await message.answer(text, reply_markup=await _keyboard_for_state(state))
-
+async def cmd_help(message: Message):
+    await message.answer(
+        tr("🎤 Напишите сообщение или отправьте голосовое.\n"
+           "✅ Проверьте и подтвердите операцию.\n"
+           "📅 История расходов — отчёт за день или месяц.\n"
+           "📥 Для CSV — /import."),
+        reply_markup=get_main_keyboard(),
+    )
 
 
 @router.message(F.text.in_(button_variants('🚌 Автобус / Метро — 2 000 сум')))
@@ -181,58 +163,9 @@ async def cmd_quick_transport(message: Message, session: AsyncSession):
     )
 
 
-@router.message(F.text.in_(button_variants('📋 Расходы за сегодня')))
-@router.message(Command("today"))
-async def cmd_today(message: Message, session: AsyncSession, state: FSMContext):
-    """Detailed today's expense report — every transaction + total."""
-    user = await UserRepository.get_or_create(
-        session, message.from_user.id,
-        message.from_user.username, message.from_user.first_name
-    )
-
-    today = local_today(user)
-    transactions = await TransactionRepository.get_by_period(
-        session, user.id, today, today, tx_type="expense"
-    )
-    total = await TransactionRepository.get_total(
-        session, user.id, today, today, "expense"
-    )
-
-    kb = await _keyboard_for_state(state)
-
-    if not transactions:
-        await message.answer(
-            tr('📋 *{p1} — расходов нет*\n\nСкажи мне голосом или напиши, на что потратил деньги 🎤' ,p1=f"{today.strftime('%d.%m.%Y')}"),
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
-        return
-
-    user_timezone = ZoneInfo(user.timezone or "Asia/Tashkent")
-    
-    lines = [tr('📋 *Расходы за {p1}*\n' ,p1=f"{today.strftime('%d.%m.%Y')}")]
-    for tx in transactions:
-        icon = CATEGORY_ICON_MAP.get(tx.category or "Другое", "❓")
-        amount_str = fmt(tx.amount, tx.currency)
-        desc = tx.description or tx.category or "—"
-        
-        stamp = tx.created_at if tx.created_at.tzinfo else tx.created_at.replace(tzinfo=timezone.utc)
-        time_str = stamp.astimezone(user_timezone).strftime("%H:%M")
-        
-        lines.append(f"`{time_str}` {icon} {desc} — *{amount_str}*")
-
-    lines.append(tr('\n💸 *Итого: {p1}*' ,p1=f'{fmt(total, user.default_currency)}'))
-
-    await message.answer(
-        "\n".join(lines),
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
-
-
 @router.message(F.text.in_(button_variants('📊 Расходы за неделю')))
 @router.message(Command("week"))
-async def cmd_week(message: Message, session: AsyncSession, state: FSMContext):
+async def cmd_week(message: Message, session: AsyncSession):
     """Weekly expense report — daily breakdown for last 7 days."""
     user = await UserRepository.get_or_create(
         session, message.from_user.id,
@@ -249,7 +182,7 @@ async def cmd_week(message: Message, session: AsyncSession, state: FSMContext):
     total_week = await TransactionRepository.get_total(
         session, user.id, week_ago, today, "expense"
     )
-    kb = await _keyboard_for_state(state)
+    kb = get_main_keyboard()
 
     if not daily_totals:
         await message.answer(
@@ -339,87 +272,4 @@ async def callback_reset_confirm(callback, session: AsyncSession):
 async def callback_reset_cancel(callback):
     """Cancel the reset operation."""
     await callback.message.edit_text(tr('✅ Отменено. Данные не удалены.'))
-    await callback.answer()
-
-MONTH_NAMES = [
-    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
-]
-
-@router.message(F.text.in_(button_variants('📅 Расходы за месяц')))
-@router.message(Command("month"))
-async def cmd_month_menu(message: Message, session: AsyncSession):
-    """Show inline keyboard with months of the current year."""
-    user = await UserRepository.get_or_create(session, message.from_user.id)
-    today = local_today(user)
-    year = today.year
-    
-    keyboard = []
-    row = []
-    
-    # Show all 12 months sequentially in a compact 3x4 grid
-    for m in range(1, 13):
-        month_name = tr(MONTH_NAMES[m-1])
-        btn_text = f"{m:02d} | {month_name}"
-        btn = InlineKeyboardButton(text=btn_text, callback_data=f"month_report:{year}-{m:02d}")
-        row.append(btn)
-        
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
-            
-    if row:
-        keyboard.append(row)
-
-    await message.answer(
-        tr('📅 *Отчет за {p1} год*\nВыберите месяц:' ,p1=f'{year}'),
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-    )
-
-import calendar
-
-@router.callback_query(F.data.startswith("month_report:"))
-async def process_month_report(callback, session: AsyncSession):
-    """Show detailed report for the selected month."""
-    _, year_month = callback.data.split(":")
-    year, month = map(int, year_month.split("-"))
-
-    user = await UserRepository.get_or_create(
-        session, callback.from_user.id,
-        callback.from_user.username, callback.from_user.first_name
-    )
-
-    last_day = calendar.monthrange(year, month)[1]
-    start_date = date(year, month, 1)
-    end_date = date(year, month, last_day)
-
-    summary = await TransactionRepository.get_summary_by_category(
-        session, user.id, start_date, end_date, "expense"
-    )
-    
-    name_display = f"{tr(MONTH_NAMES[month-1])} {year}"
-
-    if not summary:
-        await callback.message.edit_text(
-            tr('📅 *Расходы за {p1}*\n\nВ этом месяце расходов нет.' ,p1=f'{name_display}'),
-            parse_mode="Markdown"
-        )
-        await callback.answer()
-        return
-
-    lines = [tr('📅 *Расходы за {p1}*\n' ,p1=f'{name_display}')]
-    total = Decimal(0)
-    for cat, amount in summary:
-        total += amount
-        icon = CATEGORY_ICON_MAP.get(cat or "Другое", "❓")
-        cat_name = category_label(cat or "Другое")
-        lines.append(f"{icon} {cat_name} — *{fmt(amount, user.default_currency)}*")
-
-    lines.append(tr('\n💸 *Итого за месяц: {p1}*' ,p1=f'{fmt(total, user.default_currency)}'))
-
-    await callback.message.edit_text(
-        "\n".join(lines),
-        parse_mode="Markdown"
-    )
     await callback.answer()

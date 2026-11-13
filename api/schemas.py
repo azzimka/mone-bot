@@ -16,12 +16,6 @@ class TransactionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class TelegramWebAppData(BaseModel):
-    init_data: str = Field(min_length=1, max_length=4096)
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-
 class PreferencesInput(BaseModel):
     language: Literal["uz", "ru"] | None = None
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")

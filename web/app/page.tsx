@@ -167,43 +167,7 @@ export default function Page() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const tg =
-      typeof window !== "undefined"
-        ? (window as any).Telegram?.WebApp
-        : undefined;
-
-    if (tg) {
-      try {
-        tg.ready();
-        tg.expand();
-      } catch {}
-    }
-
     const init = async () => {
-      if (tg?.initData) {
-        try {
-          const authRes = await request<{
-            status: string;
-            token: string;
-            user: Profile;
-          }>("/auth/telegram/webapp", {
-            method: "POST",
-            body: JSON.stringify({ init_data: tg.initData }),
-            signal: controller.signal,
-          });
-          if (authRes?.token) {
-            localStorage.setItem("mone_token", authRes.token);
-          }
-          if (authRes?.user) {
-            setUser(authRes.user);
-            setMonth(localDay(authRes.user.timezone).slice(0, 7));
-            return;
-          }
-        } catch (e) {
-          console.error("TMA auth error:", e);
-        }
-      }
-
       try {
         const profile = await request<Profile>("/me", {
           signal: controller.signal,

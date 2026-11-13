@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { LanguageProvider } from "../components/language-provider";
 import { CategoryProvider } from "../components/category-provider";
-import Script from "next/script";
 import "./globals.css";
 import "./entry.css";
 import "./language.css";
@@ -43,12 +42,6 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="uz">
-      <head>
-        <Script
-          src="https://telegram.org/js/telegram-web-app.js"
-          strategy="beforeInteractive"
-        />
-      </head>
       <body>
         <CategoryProvider><LanguageProvider>{children}</LanguageProvider></CategoryProvider>
       </body>

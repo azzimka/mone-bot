@@ -516,14 +516,8 @@ export const russian: Record<string, string> = {
   "Sessiya tugagan. Qayta kiring.": "Сессия завершена. Войдите снова.",
   "Davr noto‘g‘ri yoki 10 yildan uzun.":
     "Период указан неверно или превышает 10 лет.",
-  "Serverda TELEGRAM_BOT_TOKEN sozlanmagan.":
-    "Вход через Telegram пока не настроен на сервере.",
   "Serverda TELEGRAM_BOT_USERNAME sozlanmagan.":
     "Вход через Telegram пока не настроен на сервере.",
-  "Noto‘g‘ri Telegram ma‘lumotlari.": "Некорректные данные Telegram.",
-  "Foydalanuvchi ma'lumoti topilmadi.": "Данные пользователя не найдены.",
-  "Telegram ma'lumotlarining muddati o'tgan.":
-    "Срок действия данных Telegram истёк.",
   "Operatsiya topilmadi.": "Операция не найдена.",
   "Interfeys tili": "Язык интерфейса",
   "{count} ta operatsiya": "Операций: {count}",

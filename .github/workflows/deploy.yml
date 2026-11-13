@@ -59,13 +59,10 @@ jobs:
     steps:
       - name: Execute remote deployment via SSH
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: ELEVENLABS_API_KEY
           script: |
             set -e
             echo "🚀 Starting deployment on Oracle Cloud..."
@@ -88,22 +85,6 @@ jobs:
             git fetch origin main
             git checkout main
             git merge --ff-only origin/main
-
-            if [ -n "${ELEVENLABS_API_KEY:-}" ]; then
-              umask 077
-              tmp_env="$(mktemp .env.tmp.XXXXXX)"
-              if [ -f .env ]; then
-                grep -v '^ELEVENLABS_API_KEY=' .env > "$tmp_env" || true
-                if [ -s "$tmp_env" ] && [ -n "$(tail -c 1 "$tmp_env")" ]; then
-                  printf '\n' >> "$tmp_env"
-                fi
-              fi
-              printf 'ELEVENLABS_API_KEY=%s\n' "$ELEVENLABS_API_KEY" >> "$tmp_env"
-              chmod 600 "$tmp_env"
-              mv "$tmp_env" .env
-              umask 022
-              echo "Synced ELEVENLABS_API_KEY into .env without printing credentials."
-            fi
 
             echo "🐳 Rebuilding and restarting bot and web containers..."
             sudo docker compose -f docker-compose.yml -f docker-compose.web.yml up -d --build

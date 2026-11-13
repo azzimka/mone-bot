@@ -3,15 +3,13 @@
 import json
 import logging
 import re
-import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from aiogram.utils.web_app import safe_parse_webapp_init_data
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,7 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from api.config import WebSettings
-from api.schemas import CategoryInput, CategoryUpdate, PreferencesInput, TelegramWebAppData, TransactionInput
+from api.schemas import CategoryInput, CategoryUpdate, PreferencesInput, TransactionInput
 from bot.database.repositories import UserRepository
 from bot.database.schema import initialize_schema
 from bot.models import Category, Transaction, User, WebLoginRequest, WebSession
@@ -45,21 +43,6 @@ async def get_user(request: Request, session: AsyncSession = Depends(get_session
         if auth.startswith("Bearer "):
             token = auth.removeprefix("Bearer ").strip()
     if not token:
-        init_data_raw = request.headers.get("X-Telegram-Init-Data", "")
-        bot_token = getattr(request.app.state, "bot_token", "")
-        if init_data_raw and bot_token:
-            try:
-                parsed = safe_parse_webapp_init_data(token=bot_token, init_data=init_data_raw)
-                age = (datetime.now(timezone.utc) - parsed.auth_date).total_seconds()
-                if parsed.user and parsed.user.id and age <= 86400 * 3:
-                    return await UserRepository.get_or_create(
-                        session=session,
-                        telegram_id=parsed.user.id,
-                        username=parsed.user.username,
-                        first_name=parsed.user.first_name,
-                    )
-            except Exception:
-                pass
         raise HTTPException(401, "Telegram orqali kiring.")
     user = (await session.execute(select(User).join(WebSession).where(
         WebSession.token_hash == digest(token), WebSession.expires_at > datetime.now(timezone.utc)
@@ -125,14 +108,11 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
             await engine.dispose()
 
     app = FastAPI(title="Mone API", version="0.1.0", lifespan=lifespan)
-    app.state.bot_token = config.TELEGRAM_BOT_TOKEN
     if pool is not None:
         app.state.pool = pool
     app.add_middleware(CORSMiddleware, allow_origins=[config.WEB_PUBLIC_URL],
                        allow_credentials=True, allow_methods=["GET", "POST", "PATCH", "DELETE"],
-                       allow_headers=["Content-Type", "Authorization", "X-Telegram-Init-Data"])
-
-    cookie_samesite = "none" if secure else "lax"
+                       allow_headers=["Content-Type", "Authorization"])
 
     @app.middleware("http")
     async def browser_security(request: Request, call_next):
@@ -144,7 +124,7 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
             response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
-        response.headers["Content-Security-Policy"] = "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://*.t.me;"
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'self';"
         return response
 
     @app.exception_handler(SQLAlchemyError)
@@ -156,44 +136,6 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
     async def health(session: AsyncSession = Depends(get_session)):
         await session.execute(text("SELECT 1"))
         return {"status": "ok"}
-
-    @app.post("/api/auth/telegram/webapp")
-    async def webapp_login(request: Request, body: TelegramWebAppData, response: Response, session: AsyncSession = Depends(get_session)):
-        bot_token = getattr(request.app.state, "bot_token", "") or config.TELEGRAM_BOT_TOKEN
-        if not bot_token:
-            raise HTTPException(503, "Serverda TELEGRAM_BOT_TOKEN sozlanmagan.")
-        try:
-            init_data = safe_parse_webapp_init_data(token=bot_token, init_data=body.init_data)
-        except Exception as e:
-            logger.warning("Failed to validate webapp init_data: %s", e)
-            raise HTTPException(401, "Noto‘g‘ri Telegram ma‘lumotlari.")
-
-        if not init_data.user or not init_data.user.id:
-            raise HTTPException(400, "Foydalanuvchi ma'lumoti topilmadi.")
-
-        if init_data.auth_date:
-            age = (datetime.now(timezone.utc) - init_data.auth_date).total_seconds()
-            if age > 86400 * 3:
-                raise HTTPException(401, "Telegram ma'lumotlarining muddati o'tgan.")
-
-        user = await UserRepository.get_or_create(
-            session=session,
-            telegram_id=init_data.user.id,
-            username=init_data.user.username,
-            first_name=init_data.user.first_name,
-        )
-
-        token = secrets.token_urlsafe(32)
-        session.add(WebSession(
-            token_hash=digest(token),
-            user_id=user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
-        ))
-        await session.commit()
-
-        response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=secure, samesite=cookie_samesite,
-                            max_age=30 * 24 * 3600, path="/api")
-        return {"status": "ok", "token": token, "user": user_json(user, config.TELEGRAM_BOT_USERNAME)}
 
     @app.post("/api/auth/telegram/request")
     async def login_request(response: Response, request: Request, session: AsyncSession = Depends(get_session)):
@@ -210,7 +152,7 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
             await session.execute(delete(WebSession).where(WebSession.expires_at <= now))
             item, cookie = await request_login(session)
         await session.commit()
-        response.set_cookie(LOGIN_COOKIE, cookie, httponly=True, secure=secure, samesite=cookie_samesite,
+        response.set_cookie(LOGIN_COOKIE, cookie, httponly=True, secure=secure, samesite="lax",
                             max_age=300, path="/api/auth")
         return {"url": f"https://t.me/{username}?start=web_{item.id}", "code": item.id[:6].upper()}
 
@@ -219,7 +161,7 @@ def create_app(config: WebSettings | None = None, pool: async_sessionmaker | Non
         status, token = await consume_login(session, request.cookies.get(LOGIN_COOKIE, ""))
         await session.commit()
         if token:
-            response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=secure, samesite=cookie_samesite,
+            response.set_cookie(SESSION_COOKIE, token, httponly=True, secure=secure, samesite="lax",
                                 max_age=30 * 24 * 3600, path="/api")
             response.delete_cookie(LOGIN_COOKIE, path="/api/auth")
         return {"status": status, "token": token}

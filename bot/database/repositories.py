@@ -135,49 +135,52 @@ class TransactionRepository:
         start_date: date,
         end_date: date,
         tx_type: Optional[str] = None,
+        *,
+        all_currencies: bool = False,
     ) -> list[Transaction]:
         """Get all transactions for a user within a specified date range."""
         stmt = (
             select(Transaction)
             .where(
                 Transaction.user_id == user_id,
-                Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery(),
                 Transaction.date >= start_date,
                 Transaction.date <= end_date,
             )
             .order_by(Transaction.date.asc(), Transaction.id.asc())
         )
+        if not all_currencies:
+            stmt = stmt.where(Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery())
         if tx_type:
             stmt = stmt.where(Transaction.type == tx_type)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_summary_by_category(
+    async def get_expenses_by_category_and_currency(
         session: AsyncSession,
         user_id: int,
         start_date: date,
         end_date: date,
-        tx_type: str = "expense",
-    ) -> list[tuple[str, Decimal]]:
-        """Get summary total grouped by category for a user within a period."""
+    ) -> list[tuple[str, str, Decimal]]:
+        """Group expenses by currency and category within the inclusive period."""
+        category = func.coalesce(Transaction.category, "Другое")
         stmt = (
             select(
-                func.coalesce(Transaction.category, "Другое").label("category"),
+                category,
+                Transaction.currency,
                 func.sum(Transaction.amount).label("total_amount"),
             )
             .where(
                 Transaction.user_id == user_id,
-                Transaction.currency == select(User.default_currency).where(User.id == user_id).scalar_subquery(),
-                Transaction.type == tx_type,
+                Transaction.type == "expense",
                 Transaction.date >= start_date,
                 Transaction.date <= end_date,
             )
-            .group_by(Transaction.category)
-            .order_by(func.sum(Transaction.amount).desc())
+            .group_by(category, Transaction.currency)
+            .order_by(Transaction.currency, func.sum(Transaction.amount).desc(), category)
         )
         result = await session.execute(stmt)
-        return [(str(row[0]), Decimal(str(row[1]))) for row in result.all()]
+        return [(name, currency, Decimal(str(total))) for name, currency, total in result.all()]
 
     @staticmethod
     async def get_daily_totals(

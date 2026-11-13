@@ -45,13 +45,8 @@ export async function request<T>(
 ): Promise<T> {
   const token =
     typeof window !== "undefined" ? localStorage.getItem("mone_token") : null;
-  const initData =
-    typeof window !== "undefined"
-      ? (window as any).Telegram?.WebApp?.initData
-      : null;
   const authHeaders: Record<string, string> = {};
   if (token) authHeaders["Authorization"] = `Bearer ${token}`;
-  if (initData) authHeaders["X-Telegram-Init-Data"] = initData;
 
   const response = await fetch(`${API}/api${path}`, {
     ...options,

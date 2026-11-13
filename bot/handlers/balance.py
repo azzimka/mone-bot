@@ -97,7 +97,6 @@ def _format_balance_message(data: dict, currency: str) -> str:
     """Format the main balance screen message."""
     balance = data["balance"]
     income = data["total_income"]
-    expenses = data["total_expenses"]
 
     # Dynamically choose the status emoji based on balance level
     if balance <= 0:
@@ -107,9 +106,7 @@ def _format_balance_message(data: dict, currency: str) -> str:
     else:
         status = "🟢"
 
-    return (
-        tr('💰 *Текущий баланс*\n\n{p1} *{p3}*\n\n├ 📥 Пополнения:  `{p5}`\n└ 📤 Расходы:      `{p7}`' ,p1=f'{status}', p3=f'{fmt(balance, currency)}', p5=f'{fmt(income, currency)}', p7=f'{fmt(expenses, currency)}')
-    )
+    return tr("💰 *Текущий баланс*\n\n{status} *{amount}*", status=status, amount=fmt(balance, currency))
 
 
 # ─── Balance screen ───────────────────────────────────────────────────────────
