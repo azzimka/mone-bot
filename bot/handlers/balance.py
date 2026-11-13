@@ -87,9 +87,6 @@ def _balance_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=tr('⚖️ Сверить'), callback_data="balance:reconcile"),
             InlineKeyboardButton(text=tr('➕ Пополнить'), callback_data="balance:topup"),
         ],
-        [
-            InlineKeyboardButton(text=tr('📋 История'), callback_data="balance:history:0"),
-        ],
     ])
 
 

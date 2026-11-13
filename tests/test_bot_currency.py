@@ -222,6 +222,9 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("USD", report)
         self.assertNotIn("Пополнения:", report)
         self.assertNotIn("Расходы:", report)
+        keyboard = message.answer.call_args.kwargs["reply_markup"].inline_keyboard
+        self.assertEqual([[button.callback_data for button in row] for row in keyboard],
+                         [["balance:reconcile", "balance:topup"]])
 
     async def test_topup_decimal_input_is_not_multiplied_by_removing_period(self):
         state = self.state(currency="USD", account_id=self.usd.id)
