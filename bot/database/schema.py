@@ -20,7 +20,12 @@ async def initialize_schema(engine: AsyncEngine) -> None:
                 await conn.execute(text(f"ALTER TABLE categories ADD COLUMN {name} VARCHAR(100)"))
 
         additions = {
-            'users': {'timezone': "VARCHAR(64) NOT NULL DEFAULT 'Asia/Tashkent'", 'week_start': 'INTEGER NOT NULL DEFAULT 0', 'quick_categories': "TEXT NOT NULL DEFAULT '[]'"},
+            'users': {
+                'timezone': "VARCHAR(64) NOT NULL DEFAULT 'Asia/Tashkent'",
+                'week_start': 'INTEGER NOT NULL DEFAULT 0',
+                'quick_categories': "TEXT NOT NULL DEFAULT '[]'",
+                'pay_webhook_token': 'VARCHAR(64)',
+            },
             'categories': {'is_archived': 'BOOLEAN NOT NULL DEFAULT FALSE'},
             'transactions': {'account_id': 'INTEGER REFERENCES accounts(id)'},
         }
@@ -29,3 +34,4 @@ async def initialize_schema(engine: AsyncEngine) -> None:
             for name, definition in definitions.items():
                 if name not in found:
                     await conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {definition}'))
+        await conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_users_pay_webhook_token ON users (pay_webhook_token)'))

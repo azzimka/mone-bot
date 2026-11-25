@@ -37,6 +37,12 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Tashkent")
     week_start: Mapped[int] = mapped_column(Integer, default=0)
     quick_categories: Mapped[str] = mapped_column(Text, default="[]")
+    pay_webhook_token: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

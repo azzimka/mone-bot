@@ -11,7 +11,8 @@ from bot.config import settings
 from bot.database.engine import async_session_maker, init_db
 from bot.database.repositories import CategoryRepository
 from bot.handlers.language import LanguageMiddleware, router as language_router
-from bot.handlers import commands, voice, text, callbacks, expense_history
+from bot.handlers import autopay, commands, voice, text, callbacks, expense_history
+from bot.services.pay_webhook import start_pay_webhook_server
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ async def main():
 
     # Register menu actions before generic voice and text handling.
     dp.include_router(language_router)
+    dp.include_router(autopay.router)
     dp.include_router(commands.router)
     dp.include_router(expense_history.router)
     dp.include_router(voice.router)
@@ -88,11 +90,15 @@ async def main():
 
     dp.startup.register(on_startup)
     finance_task = None
-    async def start_finance(bot: Bot):
-        nonlocal finance_task
+    webhook_runner = None
+
+    async def start_background_services(bot: Bot):
+        nonlocal finance_task, webhook_runner
         from bot.services.finance_worker import finance_worker
-        finance_task = asyncio.create_task(finance_worker(async_session_maker,bot))
-    dp.startup.register(start_finance)
+        finance_task = asyncio.create_task(finance_worker(async_session_maker, bot))
+        webhook_runner = await start_pay_webhook_server(bot=bot, session_pool=async_session_maker)
+
+    dp.startup.register(start_background_services)
 
     @dp.errors()
     async def on_dispatcher_error(event: ErrorEvent) -> bool:
@@ -107,6 +113,8 @@ async def main():
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:
+        if webhook_runner:
+            await webhook_runner.cleanup()
         if finance_task:
             finance_task.cancel()
             with suppress(asyncio.CancelledError): await finance_task

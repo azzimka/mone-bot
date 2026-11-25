@@ -44,6 +44,55 @@ class AIParser:
             logger.error("Financial message parsing failed (%s)", type(e).__name__)
             return None
 
+    async def parse_payment_notification(
+        self,
+        title: str,
+        text: str,
+        default_currency: str = "UZS",
+    ) -> Optional[ParsedTransactions]:
+        """Parse a Google Wallet / payment push notification into an expense."""
+        combined = "\n".join(part.strip() for part in (title, text) if part and part.strip())
+        if not combined:
+            return ParsedTransactions(transactions=[])
+        try:
+            return await asyncio.to_thread(self._parse_notification_sync, combined, default_currency)
+        except Exception as e:
+            logger.error("Payment notification parsing failed (%s)", type(e).__name__)
+            return None
+
+    def _parse_notification_sync(self, text: str, default_currency: str) -> ParsedTransactions:
+        system_prompt = f"""
+Ты разбираешь push-уведомления от Google Wallet / Google Pay о покупках и оплатах.
+Твоя задача — извлечь ТОЛЬКО состоявшийся расход (покупку/оплату).
+
+СТРОГИЕ ПРАВИЛА:
+- ИГНОРИРУЙ и верни {{"transactions": []}} для любых НЕ-расходных уведомлений:
+  * отклонённые оплаты (Declined, Отклонено, Недостаточно средств, Failed);
+  * возвраты и отмены (Refund, Возврат, Отменено, Reversal);
+  * пополнения, переводы мне, кэшбэк, бонусы;
+  * служебные уведомления (карта добавлена/готова к оплате, подтвердите личность, код, реклама, обновление).
+- Для состоявшейся оплаты извлеки:
+  * type: всегда "expense"
+  * amount: положительное число без пробелов и разделителей тысяч (например 45000 или 12.50). Убери символы валют и пробелы.
+  * currency: трёхбуквенный ISO-код валюты (UZS, USD, EUR, RUB и т.д.). "сум" / "so'm" / "сўм" / "UZS" -> "UZS", "$" -> "USD", "€" -> "EUR". Если валюта не указана, используй '{default_currency}'.
+  * category: выбери наиболее подходящую категорию по названию магазина/сервиса из списка: [Еда, Транспорт, Жильё, Одежда, Развлечения, Здоровье, Образование, Работа, Связь, Подарки, Переводы, Другое]. Например: Korzinka/Makro/Safia/KFC/Evos/кафе/ресторан -> "Еда"; Yandex Go/такси/метро/АЗС -> "Транспорт"; аптека/клиника -> "Здоровье"; Beeline/Ucell/Uzmobile -> "Связь".
+  * description: короткое понятное название места/магазина (например "Korzinka", "Yandex Go", "Safia"), без номера карты и лишнего мусора.
+
+Верни результат СТРОГО в формате JSON:
+{{
+  "transactions": [
+    {{
+      "type": "expense",
+      "amount": 45000,
+      "currency": "UZS",
+      "category": "Еда",
+      "description": "Korzinka"
+    }}
+  ]
+}}
+"""
+        return self._run_completion(system_prompt, text, default_currency)
+
     def _parse_sync(self, text: str, default_currency: str) -> ParsedTransactions:
         """Synchronous parsing logic."""
         system_prompt = f"""
@@ -75,6 +124,9 @@ class AIParser:
   ]
 }}
 """
+        return self._run_completion(system_prompt, text, default_currency)
+
+    def _run_completion(self, system_prompt: str, text: str, default_currency: str) -> ParsedTransactions:
         logger.debug("Parsing financial message")
         response = self.client.chat.completions.create(
             messages=[

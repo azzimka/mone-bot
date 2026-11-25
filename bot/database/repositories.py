@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from decimal import Decimal
+import secrets
 from typing import Optional
 
 from sqlalchemy import delete as sql_delete, func, select
@@ -75,6 +76,38 @@ class UserRepository:
                 await session.flush()
 
         return user
+
+    @staticmethod
+    async def get_or_create_pay_token(
+        session: AsyncSession,
+        telegram_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+    ) -> tuple[User, str]:
+        """Return the user's personal webhook token, creating one if absent."""
+        user = await UserRepository.get_or_create(session, telegram_id, username, first_name)
+        if not user.pay_webhook_token:
+            user.pay_webhook_token = secrets.token_urlsafe(32)
+            await session.flush()
+        return user, user.pay_webhook_token
+
+    @staticmethod
+    async def rotate_pay_token(session: AsyncSession, telegram_id: int) -> tuple[User, str]:
+        """Issue a fresh webhook token and immediately invalidate the previous one."""
+        user = await UserRepository.get_or_create(session, telegram_id)
+        user.pay_webhook_token = secrets.token_urlsafe(32)
+        await session.flush()
+        return user, user.pay_webhook_token
+
+    @staticmethod
+    async def get_by_pay_token(session: AsyncSession, token: str) -> Optional[User]:
+        """Look up a user by their personal payment webhook token."""
+        cleaned = token.strip()
+        if not cleaned or len(cleaned) > 64:
+            return None
+        stmt = select(User).where(User.pay_webhook_token == cleaned)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
 
 class TransactionRepository:

@@ -8,7 +8,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     DEFAULT_CURRENCY: str = "UZS"
     POSTGRES_PASSWORD: Optional[str] = None
+    WEBHOOK_HOST: str = "0.0.0.0"
+    WEBHOOK_PORT: int = 8000
+    WEBHOOK_BASE_URL: str = ""
+    WEB_PUBLIC_URL: str = ""
 
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def effective_webhook_base_url(self) -> str:
+        return (self.WEBHOOK_BASE_URL or self.WEB_PUBLIC_URL or "").strip().rstrip("/")
 
 settings = Settings()
