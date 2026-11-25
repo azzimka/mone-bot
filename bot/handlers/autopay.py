@@ -31,7 +31,7 @@ def _autopay_keyboard() -> InlineKeyboardMarkup:
 def _autopay_message(token: str) -> str:
     url = escape(_webhook_url())
     safe_token = escape(token)
-    body = escape('{"title":"[notif_title]","text":"[notif_text]"}')
+    body = escape('{"app":"[notif_app_name]","title":"[notif_title]","text":"[notif_text]"}')
     if current_language.get() == "uz":
         return (
             "💳 <b>Google Wallet (Android) avto-hisob</b>\n\n"

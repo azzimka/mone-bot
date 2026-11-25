@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 16 * 1024
 DEDUP_WINDOW_SECONDS = 60.0
+PARSED_DEDUP_WINDOW_SECONDS = 30.0
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_REQUESTS = 20
 
@@ -56,6 +57,17 @@ def _extract_notification_fields(payload: dict, raw_text: str) -> tuple[str, str
     return title[:500], text[:1500]
 
 
+def _extract_source_name(payload: dict) -> str:
+    app = payload.get("app")
+    if isinstance(app, str) and app.strip():
+        cleaned = app.strip()[:40]
+        for ch in ("*", "_", "`", "["):
+            cleaned = cleaned.replace(ch, "")
+        if cleaned:
+            return cleaned
+    return "Google Wallet"
+
+
 def create_pay_webhook_app(
     bot: Bot,
     session_pool,
@@ -65,6 +77,7 @@ def create_pay_webhook_app(
     parser = ai_parser or AIParser(api_key=settings.GROQ_API_KEY)
     reports = report_service or ReportService()
     recent_events: dict[tuple[int, str], float] = {}
+    recent_parsed: dict[tuple[int, str, str], float] = {}
     rate_buckets: dict[int, deque[float]] = {}
 
     def _is_rate_limited(user_id: int, now: float) -> bool:
@@ -84,6 +97,16 @@ def create_pay_webhook_app(
         if cache_key in recent_events:
             return True
         recent_events[cache_key] = now
+        return False
+
+    def _is_parsed_duplicate(user_id: int, amount_key: str, currency: str, now: float) -> bool:
+        expired = [key for key, ts in recent_parsed.items() if now - ts > PARSED_DEDUP_WINDOW_SECONDS]
+        for key in expired:
+            recent_parsed.pop(key, None)
+        cache_key = (user_id, amount_key, currency)
+        if cache_key in recent_parsed:
+            return True
+        recent_parsed[cache_key] = now
         return False
 
     async def health(_request: web.Request) -> web.Response:
@@ -132,6 +155,17 @@ def create_pay_webhook_app(
         if not parsed or not parsed.transactions:
             return web.json_response({"status": "ignored"})
 
+        # Deduplicate across apps (e.g., Google Wallet + Uzum Bank firing for the same payment)
+        parsed_now = time.monotonic()
+        unique_txs = [
+            tx
+            for tx in parsed.transactions
+            if not _is_parsed_duplicate(user.id, format(tx.amount.normalize(), "f"), tx.currency, parsed_now)
+        ]
+        if not unique_txs:
+            return web.json_response({"status": "duplicate"})
+
+        source_name = _extract_source_name(payload)
         lang_token = current_language.set(user.language or "ru")
         cat_token = current_category_names.set(
             {
@@ -143,8 +177,8 @@ def create_pay_webhook_app(
         sent = 0
         try:
             source_text = f"{title}: {text}".strip(": ")
-            total_txs = len(parsed.transactions)
-            for idx, tx in enumerate(parsed.transactions, start=1):
+            total_txs = len(unique_txs)
+            for idx, tx in enumerate(unique_txs, start=1):
                 tx_id = str(uuid.uuid4())
                 pending_transactions[tx_id] = {
                     "user_id": user.id,
@@ -156,7 +190,7 @@ def create_pay_webhook_app(
                 builder.button(text=tr("❌ Отменить"), callback_data=f"cancel:{tx_id}")
                 builder.adjust(2)
 
-                header = "💳 *Google Wallet*\n"
+                header = f"💳 *{source_name}*\n"
                 if total_txs > 1:
                     header += tr("*{p1} из {p3}*\n", p1=f"{idx}", p3=f"{total_txs}")
                 card_text = header + reports.format_transaction_confirmation(tx)

@@ -141,6 +141,15 @@ class PayWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await second.json(), {"status": "duplicate"})
         self.assertEqual(self.fake_bot.send_message.await_count, 1)
 
+        # Cross-app duplicate: Uzum Bank sends different text for the exact same payment within 30s
+        cross_app = await self.client.post(
+            "/webhook/google-pay",
+            headers={"Authorization": f"Bearer {self.token}"},
+            json={"app": "Uzum Bank", "title": "Uzum Bank", "text": "Списание 45 000 сум в KORZINKA TASHKENT"},
+        )
+        self.assertEqual(await cross_app.json(), {"status": "duplicate"})
+        self.assertEqual(self.fake_bot.send_message.await_count, 1)
+
         # Non-expense notification (e.g., declined payment) is ignored silently
         self.fake_parser.parse_payment_notification.return_value = ParsedTransactions(transactions=[])
         ignored = await self.client.post(
