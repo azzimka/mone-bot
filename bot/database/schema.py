@@ -23,7 +23,6 @@ async def initialize_schema(engine: AsyncEngine) -> None:
             'users': {'timezone': "VARCHAR(64) NOT NULL DEFAULT 'Asia/Tashkent'", 'week_start': 'INTEGER NOT NULL DEFAULT 0', 'quick_categories': "TEXT NOT NULL DEFAULT '[]'"},
             'categories': {'is_archived': 'BOOLEAN NOT NULL DEFAULT FALSE'},
             'transactions': {'account_id': 'INTEGER REFERENCES accounts(id)'},
-            'csv_imports': {'options_json': "TEXT NOT NULL DEFAULT '{}'"},
         }
         for table, definitions in additions.items():
             found = await conn.run_sync(lambda sync, table=table: {column['name'] for column in inspect(sync).get_columns(table)})

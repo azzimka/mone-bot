@@ -1,4 +1,4 @@
-"""Bot ledger regressions: exact money, owned confirmation and scoped balances."""
+"""Bot expense-only ledger regressions: exact money, owned confirmation and no balance/income flows."""
 import asyncio
 import json
 import unittest
@@ -17,11 +17,12 @@ with patch.dict("os.environ", {
     "TELEGRAM_BOT_TOKEN": "123456789:bot-test-token", "GROQ_API_KEY": "test-key",
     "DATABASE_URL": "sqlite+aiosqlite:///:memory:",
 }):
-    from bot.handlers import balance, callbacks, commands, text, voice
+    from bot.handlers import callbacks, commands, text, voice
 from bot.database.repositories import TransactionRepository
-from bot.models import Account, Base, Transaction, Transfer, User
+from bot.models import Account, Base, Transaction, User
 from bot.services.ai_parser import AIParser, ParsedTransaction, ParsedTransactions
-from bot.services.finance import account_balances, balance_totals
+from bot.services.amounts import AmountParseError, parse_amount
+from bot.services.reports import ReportService
 
 
 class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
@@ -35,17 +36,13 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.other = User(telegram_id=222, language="ru", default_currency="UZS")
         self.session.add_all([self.user, self.other])
         await self.session.flush()
-        self.cash = Account(user_id=self.user.id, name="Cash", kind="cash", currency="UZS", opening_balance=Decimal("100"))
-        self.card = Account(user_id=self.user.id, name="Card", kind="card", currency="UZS", opening_balance=Decimal("500"))
-        self.usd = Account(user_id=self.user.id, name="Dollars", kind="cash", currency="USD", opening_balance=Decimal("10"))
-        self.session.add_all([self.cash, self.card, self.usd])
+        self.cash = Account(user_id=self.user.id, name="Cash", kind="cash", currency="UZS")
+        self.usd = Account(user_id=self.user.id, name="Dollars", kind="cash", currency="USD")
+        self.session.add_all([self.cash, self.usd])
         await self.session.flush()
-        self.session.add_all([
-            Transaction(user_id=self.user.id, account_id=self.cash.id, type="income", amount=Decimal("1000"), currency="UZS", category="Зарплата", date=date(2026, 10, 1)),
-            Transaction(user_id=self.user.id, account_id=self.cash.id, type="expense", amount=Decimal("25.25"), currency="UZS", category="Еда", date=date(2026, 10, 1)),
-            Transaction(user_id=self.user.id, account_id=self.usd.id, type="income", amount=Decimal("100"), currency="USD", category="Зарплата", date=date(2026, 10, 1)),
-            Transfer(user_id=self.user.id, source_id=self.cash.id, destination_id=self.card.id, source_amount=Decimal("200"), destination_amount=Decimal("200"), date=date(2026, 10, 1), request_key="initial-card-transfer"),
-        ])
+        self.session.add(
+            Transaction(user_id=self.user.id, account_id=self.cash.id, type="expense", amount=Decimal("25.25"), currency="UZS", category="Еда", date=date(2026, 10, 1))
+        )
         await self.session.commit()
         callbacks.pending_transactions.clear()
         callbacks.processing_transactions.clear()
@@ -80,35 +77,31 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
             "transaction": {"type": "expense", "amount": Decimal("20.50"), "currency": "USD", "category": "Еда", "description": "Coffee", **overrides},
         }
 
-    def state(self, **overrides):
-        data = {"user_id": self.user.id, "account_id": self.cash.id, "currency": "UZS", **overrides}
-        state = SimpleNamespace(get_data=AsyncMock(return_value=data), clear=AsyncMock(), update_data=AsyncMock(), set_state=AsyncMock())
-        return state
-
-    async def test_expense_confirmation_uses_its_currency_and_opening_balance(self):
+    async def test_expense_confirmation_saves_without_balance_or_remainder(self):
         self.pending()
         callback = self.callback()
         with patch("bot.handlers.callbacks.local_today", return_value=date(2026, 9, 30)):
             await callbacks.on_confirm_transaction(callback, self.session)
         result = callback.message.edit_text.call_args.args[0]
-        self.assertIn("89.5 USD", result)
-        self.assertNotIn("UZS", result)
+        self.assertIn("20.5 USD", result)
+        for forbidden in ("Остаток", "Qoldiq", "Баланс", "Balans", "UZS"):
+            self.assertNotIn(forbidden, result)
         record = (await self.session.execute(select(Transaction).where(Transaction.description == "Coffee"))).scalar_one()
         self.assertEqual((record.amount, record.currency, record.account_id, record.date), (Decimal("20.50"), "USD", self.usd.id, date(2026, 9, 30)))
         self.assertNotIn("entry", callbacks.pending_transactions)
 
-    async def test_reconcile_changes_only_chosen_account_and_preserves_cents(self):
-        before = await account_balances(self.session, self.user)
-        self.pending(type="reconcile", amount=Decimal("900.50"), currency="UZS", account_id=self.cash.id)
-        await callbacks.on_confirm_transaction(self.callback(), self.session)
-        after = await account_balances(self.session, self.user)
-        values = {item["id"]: Decimal(item["balance"]) for item in after}
-        self.assertEqual(values[self.cash.id], Decimal("900.50"))
-        self.assertEqual(values[self.card.id], Decimal("700"))
-        self.assertEqual(values[self.usd.id], Decimal("110"))
-        correction = (await self.session.execute(select(Transaction).where(Transaction.category == "Сверка"))).scalar_one()
-        self.assertEqual((correction.amount, correction.type, correction.account_id), (Decimal("25.75"), "income", self.cash.id))
-        self.assertEqual(Decimal(next(item for item in before if item['id'] == self.cash.id)['balance']), Decimal('874.75'))
+    async def test_income_and_reconcile_are_rejected_everywhere(self):
+        for kind in ("income", "reconcile"):
+            with self.subTest(kind=kind):
+                with self.assertRaises(ValidationError):
+                    ParsedTransaction(type=kind, amount=Decimal("100"), category="Другое", description="test")
+                with self.assertRaises(ValueError):
+                    await TransactionRepository.create(self.session, self.user.id, kind, Decimal("100"))
+                self.pending(type=kind, amount=Decimal("100"), currency="UZS")
+                cb = self.callback()
+                await callbacks.on_confirm_transaction(cb, self.session)
+                cb.message.edit_text.assert_not_awaited()
+        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), 1)
 
     async def test_foreign_user_cannot_confirm_or_cancel_pending_entry(self):
         self.pending()
@@ -117,16 +110,18 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
         await callbacks.on_cancel_transaction(self.callback("cancel", user_id=222), self.session)
         self.assertIn("entry", callbacks.pending_transactions)
         callback.message.edit_text.assert_not_awaited()
-        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), 3)
+        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), 1)
 
     async def test_two_simultaneous_confirmation_clicks_save_only_once(self):
         self.pending()
         entered, release = asyncio.Event(), asyncio.Event()
         original = TransactionRepository.create
+
         async def slow_create(*args, **kwargs):
             entered.set()
             await release.wait()
             return await original(*args, **kwargs)
+
         with patch.object(TransactionRepository, "create", side_effect=slow_create):
             first = asyncio.create_task(callbacks.on_confirm_transaction(self.callback(), self.session))
             await entered.wait()
@@ -136,25 +131,21 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction).where(Transaction.description == "Coffee"))).scalar_one(), 1)
 
     async def test_commit_failure_keeps_pending_and_retry_saves_exactly_once(self):
-        for kind in ("expense", "reconcile"):
-            with self.subTest(kind=kind):
-                # Keep an independent pending UUID for each flow; rollback expires
-                # ORM instances, so retrieve the owner again on the next loop.
-                owner_id = (await self.session.execute(select(User.id).where(User.telegram_id == 111))).scalar_one()
-                callbacks.pending_transactions["entry"] = {"user_id": owner_id, "transaction": {
-                    "type": kind, "amount": Decimal("12.35"), "currency": "USD", "category": "Еда", "description": "Commit retry " + kind,
-                }}
-                callback = self.callback()
-                with patch.object(self.session, "commit", AsyncMock(side_effect=RuntimeError("injected commit failure"))):
-                    await callbacks.on_confirm_transaction(callback, self.session)
-                callback.message.edit_text.assert_not_awaited()
-                self.assertIn("entry", callbacks.pending_transactions)
-                self.assertNotIn("entry", callbacks.processing_transactions)
-                self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction).where(Transaction.description == "Commit retry " + kind))).scalar_one(), 0)
-                before = (await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one()
-                await callbacks.on_confirm_transaction(self.callback(), self.session)
-                self.assertNotIn("entry", callbacks.pending_transactions)
-                self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), before + 1)
+        owner_id = (await self.session.execute(select(User.id).where(User.telegram_id == 111))).scalar_one()
+        callbacks.pending_transactions["entry"] = {"user_id": owner_id, "transaction": {
+            "type": "expense", "amount": Decimal("12.35"), "currency": "USD", "category": "Еда", "description": "Commit retry",
+        }}
+        callback = self.callback()
+        with patch.object(self.session, "commit", AsyncMock(side_effect=RuntimeError("injected commit failure"))):
+            await callbacks.on_confirm_transaction(callback, self.session)
+        callback.message.edit_text.assert_not_awaited()
+        self.assertIn("entry", callbacks.pending_transactions)
+        self.assertNotIn("entry", callbacks.processing_transactions)
+        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction).where(Transaction.description == "Commit retry"))).scalar_one(), 0)
+        before = (await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one()
+        await callbacks.on_confirm_transaction(self.callback(), self.session)
+        self.assertNotIn("entry", callbacks.pending_transactions)
+        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), before + 1)
 
     async def test_failed_telegram_delivery_does_not_allow_duplicate_committed_entry(self):
         self.pending()
@@ -178,7 +169,7 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
         parser.assert_awaited_once_with("Coffee 12.35 EUR", "USD")
         self.assertIn("12.35 EUR", preview_message.answer.call_args.args[0])
 
-        self.assertEqual(next(iter(callbacks.pending_transactions.values()))['transaction']['currency'], 'EUR')
+        self.assertEqual(next(iter(callbacks.pending_transactions.values()))["transaction"]["currency"], "EUR")
         bot = AsyncMock()
         bot.get_file.return_value = SimpleNamespace(file_path="voice.ogg")
         message = self.message()
@@ -188,63 +179,30 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
             await voice.handle_voice_message(message, bot, self.session)
         parser.assert_awaited_once_with("Coffee 12.35 EUR", "USD")
 
-    async def test_multiple_account_reconciliation_never_creates_a_pending_entry(self):
-        parsed = ParsedTransactions(needs_account_selection=True, transactions=[ParsedTransaction(type='reconcile', amount='300', currency='USD', category='Сверка', description='Two cards')])
-        self.assertEqual(parsed.transactions, [])
-        message = self.message('On one card 100 USD, on another 200 USD')
-        with patch.object(text.ai_parser, 'parse', AsyncMock(return_value=parsed)):
-            await text.handle_text_message(message, self.session)
-        self.assertEqual(callbacks.pending_transactions, {})
-        message.answer.assert_awaited_once()
-
-    async def test_fsm_reconcile_keeps_initial_account_currency_after_preferences_change(self):
-        state = self.state()
-        self.user.default_currency = "USD"
-        await self.session.flush()
-        await balance._apply_reconciliation(self.message(), self.session, state, Decimal("900.50"))
-        cash = await balance_totals(self.session, self.user, "UZS", self.cash.id)
-        usd = await balance_totals(self.session, self.user, "USD", self.usd.id)
-        self.assertEqual(cash['balance'], Decimal('900.50'))
-        self.assertEqual(usd['balance'], Decimal('110'))
-        state.clear.assert_awaited_once()
-
     async def test_invalid_amounts_never_create_ledger_rows(self):
         for amount in ("-1", "0", "NaN", "1.001", "10000000000000"):
             with self.subTest(amount=amount), self.assertRaises(ValueError):
                 await TransactionRepository.create(self.session, self.user.id, "expense", amount)
-        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), 3)
+        self.assertEqual((await self.session.execute(select(func.count()).select_from(Transaction))).scalar_one(), 1)
 
-    async def test_balance_command_and_button_report_same_current_balance(self):
-        message = self.message("/balance")
-        await commands.cmd_balance(message, self.session)
-        report = message.answer.call_args.args[0]
-        self.assertIn("1 574.75 UZS", report)
-        self.assertNotIn("USD", report)
-        self.assertNotIn("Пополнения:", report)
-        self.assertNotIn("Расходы:", report)
-        keyboard = message.answer.call_args.kwargs["reply_markup"].inline_keyboard
-        self.assertEqual([[button.callback_data for button in row] for row in keyboard],
-                         [["balance:reconcile", "balance:topup"]])
-
-    async def test_topup_decimal_input_is_not_multiplied_by_removing_period(self):
-        state = self.state(currency="USD", account_id=self.usd.id)
-        message = self.message("12.50")
-        await balance.fsm_topup_amount(message, state)
-        state.update_data.assert_awaited_once_with(amount="12.50")
-        self.assertIn("12.5 USD", message.answer.call_args.args[0])
-
-    def test_decimal_expression_and_formatting_reject_ambiguous_values(self):
-        self.assertEqual(balance.parse_balance_expression("12.50 + 0,25 USD", "USD"), Decimal("12.75"))
-        self.assertEqual(balance.parse_balance_expression("25k + 1.50 ming"), Decimal("26500"))
-        self.assertIsNone(balance.parse_balance_expression("10 USD", "UZS"))
-        self.assertIsNone(balance.parse_balance_expression("1,000", "USD"))
-        self.assertIsNone(balance.parse_balance_expression("-1", "USD"))
+    def test_amount_parsing_formatting_and_expense_only_reports(self):
+        self.assertEqual(parse_amount("12.50"), Decimal("12.50"))
+        self.assertEqual(parse_amount("1 234,56"), Decimal("1234.56"))
+        for bad in ("1,000", "1.001", "abc", ""):
+            with self.assertRaises(AmountParseError):
+                parse_amount(bad)
         self.assertEqual(commands.fmt(Decimal("9999999999999.99"), "USD"), "9 999 999 999 999.99 USD")
+        reports = ReportService()
+        daily = reports.format_daily_report([{"type": "expense", "category": "Еда", "description": "Кофе", "amount": 25000}], 25000, "UZS")
+        period = reports.format_period_report({"Еда": 25000}, 25000, "Ноябрь", "UZS")
+        for text_out in (daily, period):
+            for forbidden in ("Доход", "доход", "Остаток", "Баланс"):
+                self.assertNotIn(forbidden, text_out)
 
     def test_parser_uses_default_for_omitted_currency_and_logs_no_financial_content(self):
         parser = AIParser.__new__(AIParser)
         parser.model = "test-model"
-        secret = "PRIVATE_INCOME_12225"
+        secret = "PRIVATE_EXPENSE_12225"
         response = {"transactions": [{"type": "expense", "amount": 12.35, "category": "Еда", "description": secret}]}
         create = MagicMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)))]))
         parser.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
@@ -252,7 +210,7 @@ class BotCurrencyTests(unittest.IsolatedAsyncioTestCase):
             parsed = parser._parse_sync(secret, "USD")
         self.assertEqual((parsed.transactions[0].currency, parsed.transactions[0].amount), ("USD", Decimal("12.35")))
         self.assertNotIn(secret, " ".join(logs.output))
-        create.return_value.choices[0].message.content = json.dumps({"transactions": [{**response['transactions'][0], "amount": -1}]})
+        create.return_value.choices[0].message.content = json.dumps({"transactions": [{**response["transactions"][0], "amount": -1}]})
         with self.assertLogs("bot.services.ai_parser", level="ERROR") as logs, self.assertRaises(ValidationError):
             parser._parse_sync(secret, "USD")
         self.assertNotIn(secret, " ".join(logs.output))

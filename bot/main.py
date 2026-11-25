@@ -11,7 +11,7 @@ from bot.config import settings
 from bot.database.engine import async_session_maker, init_db
 from bot.database.repositories import CategoryRepository
 from bot.handlers.language import LanguageMiddleware, router as language_router
-from bot.handlers import commands, voice, text, callbacks, balance, csv_import, web_login, expense_history
+from bot.handlers import commands, voice, text, callbacks, expense_history
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +78,9 @@ async def main():
     dp.message.outer_middleware(language)
     dp.callback_query.outer_middleware(language)
 
-    # Register menu and balance actions before generic voice and text handling.
+    # Register menu actions before generic voice and text handling.
     dp.include_router(language_router)
-    dp.include_router(web_login.router)
-    dp.include_router(csv_import.router)
     dp.include_router(commands.router)
-    dp.include_router(balance.router)
     dp.include_router(expense_history.router)
     dp.include_router(voice.router)
     dp.include_router(text.router)

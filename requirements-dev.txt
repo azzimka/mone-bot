@@ -1,2 +1,2 @@
--r requirements-web.txt
+-r requirements.txt
 aiosqlite==0.22.1

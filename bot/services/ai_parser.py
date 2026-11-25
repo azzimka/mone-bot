@@ -9,8 +9,8 @@ from groq import Groq
 logger = logging.getLogger(__name__)
 
 class ParsedTransaction(BaseModel):
-    type: Literal["income", "expense", "reconcile"]
-    amount: Decimal = Field(ge=0, le=Decimal("9999999999999.99"), max_digits=15, decimal_places=2)
+    type: Literal["expense"] = "expense"
+    amount: Decimal = Field(gt=0, le=Decimal("9999999999999.99"), max_digits=15, decimal_places=2)
     currency: str = "UZS"
     category: str = Field(min_length=1, max_length=100)
     description: str = Field(max_length=2000)
@@ -23,21 +23,9 @@ class ParsedTransaction(BaseModel):
             raise ValueError("Currency must be a three-letter code")
         return value
 
-    @model_validator(mode="after")
-    def positive_entry_amount(self):
-        if self.type != "reconcile" and self.amount <= 0:
-            raise ValueError("Income and expense amounts must be positive")
-        return self
 
 class ParsedTransactions(BaseModel):
     transactions: list[ParsedTransaction]
-    needs_account_selection: bool = False
-
-    @model_validator(mode="after")
-    def do_not_guess_account(self):
-        if self.needs_account_selection:
-            self.transactions = []
-        return self
 
 class AIParser:
     def __init__(self, api_key: str):
@@ -59,23 +47,23 @@ class AIParser:
     def _parse_sync(self, text: str, default_currency: str) -> ParsedTransactions:
         """Synchronous parsing logic."""
         system_prompt = f"""
-Вы умный финансовый ассистент. Ваша задача - извлекать финансовые транзакции и операции из сообщений пользователя.
+Вы умный помощник по учёту расходов. Ваша задача — извлекать ТОЛЬКО расходы (траты, покупки, оплаты) из сообщений пользователя.
 
-Каждая транзакция должна содержать: 
-- type:
-    * "expense" — трата, покупка, оплата (еда, такси, кафе и т.д.)
-    * "income" — доход (зарплата, приход, вернули долг, подарок)
-    * "reconcile" — сверка / установка фактического баланса ОДНОГО счёта по умолчанию. Используется, когда пользователь сообщает СВОЙ ТЕКУЩИЙ ОСТАТОК / БАЛАНС (например: "мой баланс 50 тысяч", "баланс 50к", "сведи баланс на 50 000", "meni balansim 50 ming", "balans 50000"). Никогда не складывай остатки разных карт, наличных, банковских счетов или валют в один amount. Если для сверки указан конкретный счёт/карта либо несколько счетов или валют, бот не может безопасно выбрать счёт: верни {{"needs_account_selection": true, "transactions": []}}. Не угадывай и не конвертируй валюты.
-- amount: число (сумма). Обязательно число без пробелов.
-- currency: валюта. Если не указана, используй '{default_currency}'
-- category: выбери наиболее подходящую категорию. Для сверки баланса укажи "Сверка". Для остальных: [Еда, Транспорт, Жильё, Одежда, Развлечения, Здоровье, Образование, Работа, Связь, Подарки, Зарплата, Инвестиции, Фриланс, Переводы, Другое]
-- description: краткое описание из текста (например "сверка баланса", "кофе", "такси")
+ВАЖНО:
+- Бот ведёт только учёт расходов.
+- НЕ извлекай доходы (зарплата, приход, пополнение, вернули долг, подарок мне) и НЕ извлекай сообщения о балансе/остатке/сверке баланса (например «мой баланс 50 тысяч», «осталось 100к», «зарплата 5 млн»). Для таких сообщений верни пустой список: {{"transactions": []}}.
 
-Если в тексте вообще нет финансовых операций или чисел — верни пустой список transactions: {{"transactions": []}}.
+Каждый расход должен содержать:
+- type: всегда "expense"
+- amount: положительное число (сумма без пробелов).
+- currency: трёхбуквенный код валюты. Если не указана, используй '{default_currency}'. Не конвертируй валюты.
+- category: выбери наиболее подходящую категорию из списка: [Еда, Транспорт, Жильё, Одежда, Развлечения, Здоровье, Образование, Работа, Связь, Подарки, Переводы, Другое]
+- description: краткое описание расхода из текста (например "кофе", "такси")
+
+Если в тексте нет расходов или чисел — верни пустой список transactions: {{"transactions": []}}.
 
 Верни результат СТРОГО в формате JSON:
 {{
-  "needs_account_selection": false,
   "transactions": [
     {{
       "type": "expense",

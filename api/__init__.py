@@ -1,1 +1,0 @@
-"""Mone web API."""

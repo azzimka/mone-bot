@@ -8,10 +8,8 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, BotComma
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config import settings
 from bot.database.repositories import UserRepository, CategoryRepository, TransactionRepository
 from bot.models.transaction import Transaction
-from bot.models.csv_import import CsvImport
 from bot.services.finance import local_today
 from bot.services.i18n import current_language, tr, button_variants
 
@@ -33,8 +31,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Build the persistent reply keyboard with main action buttons."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=tr("💰 Баланс")), KeyboardButton(text=tr("📋 Расходы за сегодня"))],
-            [KeyboardButton(text=tr("📅 История расходов"))],
+            [KeyboardButton(text=tr("📋 Расходы за сегодня")), KeyboardButton(text=tr("📅 История расходов"))],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -43,6 +40,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
 
 # A client may still display a reply keyboard sent before the update.
 @router.message(F.text.in_({
+    "💰 Баланс", "💰 Balans",
     "🧠 AI-финансист", "🧠 AI-moliyachi",
     "📊 Разбор за месяц", "📊 Oylik tahlil",
     "🔍 На что я часто трачу?", "🔍 Ko‘p sarflanadigan joylar",
@@ -92,33 +90,20 @@ async def configure_chat_menu(bot, telegram_id: int) -> bool:
 async def send_welcome(message: Message, first_name: str | None, bot=None, telegram_id: int | None = None):
     if bot is not None and telegram_id is not None:
         await configure_chat_menu(bot, telegram_id)
-    greeting = f"👋 Salom, {first_name or 'Mone'}!\n\n🎤 Kirim yoki chiqimni yozing yoki ayting.\nMasalan: Qahva 25000." if current_language.get() == "uz" else f"👋 Привет, {first_name or 'Mone'}!\n\n🎤 Напишите или скажите доход или расход.\nНапример: Кофе 25000."
+    greeting = (
+        f"👋 Salom, {first_name or 'Mone'}!\n\n🎤 Chiqimni yozing yoki ayting.\nMasalan: Qahva 25000."
+        if current_language.get() == "uz"
+        else f"👋 Привет, {first_name or 'Mone'}!\n\n🎤 Напишите или скажите расход.\nНапример: Кофе 25000."
+    )
     await message.answer(greeting, reply_markup=get_main_keyboard())
-
-
-def web_settings_url() -> str:
-    return settings.WEB_PUBLIC_URL.rstrip("/") + "/?view=settings"
-
-
-async def send_settings_link(message: Message):
-    if not settings.WEB_PUBLIC_URL:
-        await message.answer(tr("Сайт пока не настроен."))
-        return
-    await message.answer("⚙️ Sozlamalar" if current_language.get() == "uz" else "⚙️ Настройки", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚙️ Sozlamalarni ochish" if current_language.get() == "uz" else "⚙️ Открыть настройки", url=web_settings_url())]]))
-
-
-@router.message(Command("settings"))
-async def cmd_settings(message: Message):
-    await send_settings_link(message)
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
-        tr("🎤 Напишите сообщение или отправьте голосовое.\n"
-           "✅ Проверьте и подтвердите операцию.\n"
-           "📅 История расходов — отчёт за день или месяц.\n"
-           "📥 Для CSV — /import."),
+        tr("🎤 Напишите расход или отправьте голосовое.\n"
+           "✅ Проверьте и подтвердите запись.\n"
+           "📅 История расходов — отчёт за день или месяц."),
         reply_markup=get_main_keyboard(),
     )
 
@@ -227,16 +212,9 @@ async def cmd_week(message: Message, session: AsyncSession):
     )
 
 
-@router.message(Command("balance"))
-async def cmd_balance(message: Message, session: AsyncSession):
-    """Use the same current-balance screen for the command and menu button."""
-    from bot.handlers.balance import cmd_balance as show_balance
-    await show_balance(message, session)
-
-
 @router.message(Command("reset"))
 async def cmd_reset(message: Message):
-    """Ask for confirmation before deleting all transactions."""
+    """Ask for confirmation before deleting all expense records."""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text=tr('🗑 Да, удалить всё'), callback_data="reset_confirm"),
@@ -244,7 +222,7 @@ async def cmd_reset(message: Message):
         ]
     ])
     await message.answer(
-        tr('⚠️ *Удалить все транзакции?*\n\nЭто действие удалит все твои записи о расходах и доходах. Отменить будет невозможно.\n\nУверен?'),
+        tr('⚠️ *Удалить все расходы?*\n\nЭто действие удалит все твои записи о расходах. Отменить будет невозможно.\n\nУверен?'),
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
@@ -260,9 +238,8 @@ async def callback_reset_confirm(callback, session: AsyncSession):
     await session.execute(
         sql_delete(Transaction).where(Transaction.user_id == user.id)
     )
-    await session.execute(sql_delete(CsvImport).where(CsvImport.user_id == user.id))
     await callback.message.edit_text(
-        tr('🗑 *Все транзакции удалены.*\n\nМожешь начинать с чистого листа! 🆕'),
+        tr('🗑 *Все расходы удалены.*\n\nМожешь начинать с чистого листа! 🆕'),
         parse_mode="Markdown",
     )
     await callback.answer()

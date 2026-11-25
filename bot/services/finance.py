@@ -51,50 +51,6 @@ async def check_category(session, user_id: int, category: str, existing: str | N
         raise ValueError("Arxivlangan kategoriyaga yangi yozuv qo‘shib bo‘lmaydi.")
 
 
-async def balance_adjustment(session, user_id: int, currency: str, account_id: int | None = None) -> Decimal:
-    accounts = (await session.execute(select(Account).where(Account.user_id == user_id, Account.currency == currency))).scalars().all()
-    ids = [item.id for item in accounts if account_id is None or item.id == account_id]
-    total = sum((item.opening_balance for item in accounts if item.id in ids), Decimal(0))
-    if ids:
-        transfers = (await session.execute(select(Transfer).where(Transfer.user_id == user_id))).scalars().all()
-        total += sum((item.destination_amount for item in transfers if item.destination_id in ids), Decimal(0))
-        total -= sum((item.source_amount for item in transfers if item.source_id in ids), Decimal(0))
-    return total
-
-
-async def account_balances(session, user: User) -> list[dict]:
-    accounts = await ensure_accounts(session, user)
-    totals = (await session.execute(select(Transaction.account_id, Transaction.type, func.sum(Transaction.amount)).where(Transaction.user_id == user.id).group_by(Transaction.account_id, Transaction.type))).all()
-    result = []
-    for account in accounts:
-        value = sum((amount if kind == "income" else -amount if kind == "expense" else Decimal(0) for key, kind, amount in totals if key == account.id), Decimal(0))
-        value += await balance_adjustment(session, user.id, account.currency, account.id)
-        result.append({"id": account.id, "name": account.name, "kind": account.kind, "currency": account.currency, "balance": str(value), "opening_balance": str(account.opening_balance)})
-    return result
-
-
-async def balance_totals(session, user: User, currency: str | None = None,
-                         account_id: int | None = None) -> dict:
-    """One currency/account scope shared by bot confirmations and reconciliation."""
-    await ensure_accounts(session, user)
-    if account_id is not None:
-        account = await owned_account(session, user, account_id, currency)
-        currency = account.currency
-    currency = currency or user.default_currency
-    filters = [Transaction.user_id == user.id, Transaction.currency == currency]
-    if account_id is not None:
-        filters.append(Transaction.account_id == account_id)
-    rows = (await session.execute(select(Transaction.type, func.sum(Transaction.amount))
-                                  .where(*filters).group_by(Transaction.type))).all()
-    amounts = dict(rows)
-    income = amounts.get('income', Decimal(0))
-    expense = amounts.get('expense', Decimal(0))
-    adjustment = await balance_adjustment(session, user.id, currency, account_id)
-    return {'total_income': income, 'total_expenses': expense,
-            'balance': income - expense + adjustment, 'currency': currency,
-            'account_id': account_id}
-
-
 def next_occurrence(day: date, frequency: str, anchor: int) -> date:
     if frequency == "daily": return day + timedelta(days=1)
     if frequency == "weekly": return day + timedelta(days=7)
@@ -105,7 +61,7 @@ def next_occurrence(day: date, frequency: str, anchor: int) -> date:
 
 async def recurring_due(session, user: User, today: date | None = None) -> int:
     today = today or local_today(user)
-    rules = (await session.execute(select(RecurringRule).where(RecurringRule.user_id == user.id, RecurringRule.enabled.is_(True), RecurringRule.next_date <= today).with_for_update(skip_locked=True))).scalars().all()
+    rules = (await session.execute(select(RecurringRule).where(RecurringRule.user_id == user.id, RecurringRule.enabled.is_(True), RecurringRule.type == "expense", RecurringRule.next_date <= today).with_for_update(skip_locked=True))).scalars().all()
     count = 0
     for rule in rules:
         for _ in range(31):

@@ -10,9 +10,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from bot.database.repositories import UserRepository
 from bot.database.schema import initialize_schema
 from bot.handlers.language import LanguageMiddleware, language_keyboard, save_language
-from bot.models import Category, User, WebLoginRequest
+from bot.models import Category, User
 from bot.services.i18n import UZBEK, RUSSIAN, current_language, current_category_names, category_label, tr, button_variants
-from bot.services.web_auth import request_login
 
 
 class LanguageTests(unittest.IsolatedAsyncioTestCase):
@@ -114,20 +113,6 @@ class LanguageTests(unittest.IsolatedAsyncioTestCase):
             await LanguageMiddleware()(AsyncMock(side_effect=RuntimeError("failed")), self.message(), {"session": self.session})
         self.assertEqual(current_language.get(), original)
 
-    async def test_web_login_continues_after_selection_but_still_needs_approval(self):
-        item, _ = await request_login(self.session)
-        await self.session.commit()
-        message = self.message(f"/start web_{item.id}")
-        await LanguageMiddleware()(AsyncMock(), message, {"session": self.session})
-        buttons = message.answer.call_args.kwargs["reply_markup"].inline_keyboard[0]
-        self.assertTrue(all(button.callback_data.endswith(item.id) for button in buttons))
-        callback = self.callback("uz", item.id)
-        with patch.dict("sys.modules", {"bot.handlers.commands": SimpleNamespace(send_welcome=AsyncMock())}):
-            await save_language(callback, self.session, SimpleNamespace(clear=AsyncMock()))
-        self.assertIn(item.id[:6].upper(), callback.message.answer.call_args.args[0])
-        self.assertEqual(callback.message.answer.call_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data, f"web_login:{item.id}")
-        self.assertIsNone((await self.session.get(WebLoginRequest, item.id)).user_id)
-
     async def test_selection_cannot_change_a_different_chat_or_accept_unknown_language(self):
         callback = self.callback()
         callback.message.chat.id = 222
@@ -136,14 +121,14 @@ class LanguageTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await UserRepository.set_language(self.session, 111, "en")
 
-    async def test_old_bot_language_buttons_cannot_override_website_preference(self):
+    async def test_language_can_be_changed_directly_in_bot(self):
         await UserRepository.set_language(self.session, 111, "ru")
         await self.session.commit()
-        link = AsyncMock()
-        with patch.dict("sys.modules", {"bot.handlers.commands": SimpleNamespace(send_settings_link=link)}):
+        welcome = AsyncMock()
+        with patch.dict("sys.modules", {"bot.handlers.commands": SimpleNamespace(send_welcome=welcome)}):
             await save_language(self.callback("uz"), self.session, SimpleNamespace(clear=AsyncMock()))
-        self.assertEqual((await UserRepository.get_or_create(self.session, 111)).language, "ru")
-        link.assert_awaited_once()
+        self.assertEqual((await UserRepository.get_or_create(self.session, 111)).language, "uz")
+        welcome.assert_awaited_once()
 
     async def test_bot_menu_resyncs_when_saved_account_language_changes(self):
         await UserRepository.set_language(self.session, 111, "uz")
@@ -178,4 +163,4 @@ class LanguageTests(unittest.IsolatedAsyncioTestCase):
         for dictionary in (UZBEK, RUSSIAN):
             for key, translation in dictionary.items():
                 self.assertEqual(fields(key), fields(translation), key)
-        self.assertEqual(button_variants("💰 Баланс"), {"💰 Баланс", "💰 Balans"})
+        self.assertEqual(button_variants("📅 История расходов"), {"📅 История расходов", "📅 Chiqimlar tarixi"})

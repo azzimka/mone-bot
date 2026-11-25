@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.repositories import TransactionRepository
 from bot.handlers.commands import fmt
 from bot.models import User
-from bot.services.csv_import import CsvImportError, parse_amount
-from bot.services.finance import balance_totals, local_today, owned_account
+from bot.services.amounts import AmountParseError, parse_amount
+from bot.services.finance import local_today, owned_account
 from bot.services.i18n import category_label, current_language, tr
 
 logger = logging.getLogger(__name__)
@@ -57,40 +57,17 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
         currency = currency.upper()
         amount = parse_amount(str(tx["amount"]))
         kind = tx["type"]
-        if kind not in {"income", "expense", "reconcile"} or amount < 0 or (kind != "reconcile" and amount == 0):
+        if kind != "expense" or amount <= 0:
             raise ValueError("Invalid transaction")
         account = await owned_account(session, user, tx.get("account_id"), currency)
 
-        if kind == "reconcile":
-            totals = await balance_totals(session, user, currency, account.id)
-            before = totals["balance"]
-            difference = amount - before
-            if difference:
-                await TransactionRepository.create(
-                    session=session, user_id=user.id, account_id=account.id,
-                    type="income" if difference > 0 else "expense", amount=abs(difference),
-                    currency=currency, category="Сверка",
-                    description=f"Сверка ({difference:+f} {currency})",
-                    voice_text=pending.get("voice_text", ""), date=local_today(user),
-                )
-            success = _localized(
-                f"⚖️ Balans tenglashtirildi\n💳 {account.name}\nOldin: {fmt(before, currency)}\nHozir: {fmt(amount, currency)}",
-                f"⚖️ Баланс сверен\n💳 {account.name}\nБыло: {fmt(before, currency)}\nСейчас: {fmt(amount, currency)}",
-            )
-        else:
-            await TransactionRepository.create(
-                session=session, user_id=user.id, account_id=account.id,
-                type=kind, amount=amount, currency=currency,
-                category=tx.get("category", "Другое"), description=tx.get("description", ""),
-                voice_text=pending.get("voice_text", ""), date=local_today(user),
-            )
-            success = f"✅ {tr('Доход') if kind == 'income' else tr('Расход')}: {fmt(amount, currency)}\n📂 {category_label(tx.get('category', 'Другое'))}"
-            if kind == "expense":
-                totals = await balance_totals(session, user, currency)
-                success += _localized(
-                    f"\n\n💵 Qoldiq: {fmt(totals['balance'], currency)}",
-                    f"\n\n💵 Остаток: {fmt(totals['balance'], currency)}",
-                )
+        await TransactionRepository.create(
+            session=session, user_id=user.id, account_id=account.id,
+            type="expense", amount=amount, currency=currency,
+            category=tx.get("category", "Другое"), description=tx.get("description", ""),
+            voice_text=pending.get("voice_text", ""), date=local_today(user),
+        )
+        success = f"✅ {tr('Расход')}: {fmt(amount, currency)}\n📂 {category_label(tx.get('category', 'Другое'))}"
         # A successful Telegram message must mean the ledger is durable. Remove
         # the pending entry before network delivery so a failed edit cannot make
         # a later click save the already committed transaction a second time.
@@ -99,7 +76,7 @@ async def on_confirm_transaction(callback: CallbackQuery, session: AsyncSession)
         pending_transactions.pop(tx_id, None)
         await callback.message.edit_text(success)
         await callback.answer(tr("✅ Успешно сохранено!"))
-    except (ValueError, CsvImportError):
+    except (ValueError, AmountParseError):
         if committed:
             raise
         await session.rollback()

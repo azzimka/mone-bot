@@ -14,8 +14,6 @@ from bot.services.ai_parser import AIParser
 from bot.services.reports import ReportService
 from bot.handlers.callbacks import pending_transactions
 from bot.database.repositories import UserRepository
-from bot.handlers.commands import get_main_keyboard
-from bot.services.finance import owned_account
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -63,17 +61,13 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
         # 3. Parse with AIParser
         parsed_result = await ai_parser.parse(transcribed_text, user.default_currency)
 
-        if parsed_result and parsed_result.needs_account_selection:
-            await message.answer("💳 Hisoblarni alohida tekshiring. Bir nechta hisob yoki valyuta qoldig‘ini qo‘shib tenglashtirib bo‘lmaydi. Hisoblar ilovada ko‘rinadi." if current_language.get() == "uz" else "💳 Проверьте счета отдельно. Нельзя сверять суммой остатки разных счетов или валют. Счета доступны в приложении.", reply_markup=get_main_keyboard())
-            return
-
         if not parsed_result or not parsed_result.transactions:
-            await message.answer(tr('⚠️ Не удалось распознать финансовые операции в тексте. Попробуйте сказать точнее, например: «Кофе 25 тысяч».'))
+            await message.answer(tr('⚠️ Не удалось распознать расходы в тексте. Бот ведёт только учёт расходов — например: «Кофе 25 тысяч».'))
             return
 
         total_txs = len(parsed_result.transactions)
 
-        # 4. Each transaction gets its own clean confirmation card (NO repeated voice text)
+        # 4. Each expense gets its own clean confirmation card (NO repeated voice text)
         for i, tx in enumerate(parsed_result.transactions, start=1):
             tx_id = str(uuid.uuid4())
 
@@ -83,15 +77,10 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
                 "transaction": tx.model_dump(),
                 "voice_text": transcribed_text
             }
-            account = None
-            if tx.type == "reconcile":
-                account = await owned_account(session, user, None, tx.currency)
-                pending_transactions[tx_id]["transaction"]["account_id"] = account.id
 
             # Create inline keyboard
             builder = InlineKeyboardBuilder()
-            btn_text = tr('⚖️ Приравнять') if tx.type == "reconcile" else tr('✅ Верно')
-            builder.button(text=btn_text, callback_data=f"confirm:{tx_id}")
+            builder.button(text=tr('✅ Верно'), callback_data=f"confirm:{tx_id}")
             builder.button(text=tr('❌ Отменить'), callback_data=f"cancel:{tx_id}")
             builder.adjust(2)
 
@@ -99,9 +88,6 @@ async def handle_voice_message(message: Message, bot: Bot, session: AsyncSession
             header = tr('*{p1} из {p3}*\n' ,p1=f'{i}', p3=f'{total_txs}') if total_txs > 1 else ""
             # Pass empty string so voice text is NOT repeated in each card
             confirmation_msg = header + report_service.format_transaction_confirmation(tx, "")
-            if account is not None:
-                account_name = account.name.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
-                confirmation_msg += (f"\n\n💳 Faqat hisob: {account_name}" if current_language.get() == "uz" else f"\n\n💳 Только счёт: {account_name}")
 
             await message.answer(
                 confirmation_msg,

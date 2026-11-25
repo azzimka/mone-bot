@@ -158,7 +158,7 @@ class ExpenseHistoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_reply_keyboard_keeps_history_and_slash_menu_only_shows_start(self):
         keyboard = commands.get_main_keyboard()
         self.assertEqual([button.text for row in keyboard.keyboard for button in row],
-                         ["💰 Баланс", "📋 Расходы за сегодня", "📅 История расходов"])
+                         ["📋 Расходы за сегодня", "📅 История расходов"])
         await set_bot_commands(self.bot)
         await commands.configure_chat_menu(self.bot, 111)
         requests = [call.args[1] for call in self.bot.session.make_request.await_args_list]

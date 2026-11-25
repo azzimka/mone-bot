@@ -22,12 +22,8 @@ DEFAULT_CATEGORIES: list[tuple[str, str]] = [
     ("💼", "Работа"),
     ("📱", "Связь"),
     ("🎁", "Подарки"),
-    ("❓", "Другое"),
-    ("💰", "Зарплата"),
-    ("📈", "Инвестиции"),
-    ("🎯", "Фриланс"),
     ("💸", "Переводы"),
-    ("⚖️", "Сверка"),
+    ("❓", "Другое"),
 ]
 
 # Emoji map for category icons in reports
@@ -97,11 +93,11 @@ class TransactionRepository:
         date: Optional[date] = None,
         account_id: Optional[int] = None,
     ) -> Transaction:
-        """Create and persist a new transaction."""
-        from bot.services.csv_import import parse_amount
+        """Create and persist a new expense transaction."""
+        from bot.services.amounts import parse_amount
         amount = parse_amount(str(amount))
-        if type not in {"income", "expense"} or amount <= 0:
-            raise ValueError("Income and expense amounts must be positive")
+        if type != "expense" or amount <= 0:
+            raise ValueError("Only positive expense amounts are supported")
         if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha():
             raise ValueError("Currency must be a three-letter code")
         currency = currency.upper()

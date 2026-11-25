@@ -19,11 +19,10 @@ logger = logging.getLogger(__name__)
 CHOICE = "Tilni tanlang / Выберите язык:"
 
 
-def language_keyboard(request_id: str = "") -> InlineKeyboardMarkup:
-    suffix = f":{request_id}" if request_id else ""
+def language_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🇺🇿 O‘zbekcha", callback_data=f"language:uz{suffix}"),
-        InlineKeyboardButton(text="🇷🇺 Русский", callback_data=f"language:ru{suffix}"),
+        InlineKeyboardButton(text="🇺🇿 O‘zbekcha", callback_data="language:uz"),
+        InlineKeyboardButton(text="🇷🇺 Русский", callback_data="language:ru"),
     ]])
 
 
@@ -43,7 +42,7 @@ class LanguageMiddleware(BaseMiddleware):
             custom = (await session.execute(select(Category).where(Category.user_id==user.id))).scalars().all()
             current_category_names.set({item.name:(item.name_ru if user.language=='ru' else item.name_uz) or item.display_name for item in custom if (item.name_ru if user.language=='ru' else item.name_uz) or item.display_name})
             data["mone_user"] = user
-            is_choice = isinstance(event, CallbackQuery) and bool(re.fullmatch(r"language:(uz|ru)(?::[a-f0-9]{32})?", event.data or ""))
+            is_choice = isinstance(event, CallbackQuery) and bool(re.fullmatch(r"language:(uz|ru)", event.data or ""))
             if user.language is None and not is_choice:
                 message = event if isinstance(event, Message) else event.message
                 if isinstance(event, CallbackQuery):
@@ -53,9 +52,8 @@ class LanguageMiddleware(BaseMiddleware):
                 if message.chat.type != "private":
                     await message.answer("Tilni botning shaxsiy chatida tanlang. / Выберите язык в личном чате с ботом.")
                     return
-                match = re.fullmatch(r"/start(?:@\w+)? web_([a-f0-9]{32})", message.text or "")
                 await session.commit()
-                await message.answer(CHOICE, reply_markup=language_keyboard(match.group(1) if match else ""))
+                await message.answer(CHOICE, reply_markup=language_keyboard())
                 return
             if user.language and data.get("bot") and self._menu_languages.get(user.telegram_id) != user.language:
                 from bot.handlers.commands import configure_chat_menu
@@ -73,43 +71,26 @@ async def choose_language(message: Message, state: FSMContext, session: AsyncSes
     if message.chat.type != "private":
         await message.answer("Tilni botning shaxsiy chatida tanlang. / Выберите язык в личном чате с ботом.")
         return
-    user = await UserRepository.get_or_create(session, message.from_user.id)
+    await UserRepository.get_or_create(session, message.from_user.id)
     await state.clear()
-    if user.language is not None:
-        from bot.handlers.commands import send_settings_link
-        await send_settings_link(message)
-        return
     await message.answer(CHOICE, reply_markup=language_keyboard())
 
 
-@router.callback_query(F.data.regexp(r"^language:(uz|ru)(?::[a-f0-9]{32})?$"))
+@router.callback_query(F.data.regexp(r"^language:(uz|ru)$"))
 async def save_language(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
     message = callback.message
     if message is None or message.chat.type != "private" or message.chat.id != callback.from_user.id:
         await callback.answer()
         return
-    _, language, *continuation = callback.data.split(":")
-    existing = await UserRepository.get_or_create(session, callback.from_user.id)
-    if existing.language is not None:
-        await callback.answer()
-        if continuation:
-            from bot.handlers.web_login import show_web_login
-            await show_web_login(message, continuation[0], session)
-        else:
-            from bot.handlers.commands import send_settings_link
-            await send_settings_link(message)
-        return
+    _, language = callback.data.split(":", 1)
     user = await UserRepository.set_language(session, callback.from_user.id, language)
     await session.commit()
     await state.clear()
     token = current_language.set(language)
     try:
         await callback.answer(tr("Til saqlandi."))
-        await message.edit_text(tr("Til saqlandi. Bot va website hisobingizda shu til ishlatiladi. Tilni website sozlamasida o‘zgartirasiz."))
+        await message.edit_text(tr("Til saqlandi."))
         from bot.handlers.commands import send_welcome
         await send_welcome(message, user.first_name, callback.bot, user.telegram_id)
-        if continuation:
-            from bot.handlers.web_login import show_web_login
-            await show_web_login(message, continuation[0], session)
     finally:
         current_language.reset(token)
